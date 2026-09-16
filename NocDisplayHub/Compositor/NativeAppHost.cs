@@ -17,6 +17,8 @@ public static class NativeAppHost
     private const long WS_CAPTION = 0x00C00000;
     private const long WS_THICKFRAME = 0x00040000;
     private const long WS_SYSMENU = 0x00080000;
+    private const long WS_POPUP = unchecked((long)0x80000000);
+    private const long WS_CHILD = 0x40000000;
     private const uint SWP_NOZORDER = 0x0004;
     private const uint SWP_FRAMECHANGED = 0x0020;
 
@@ -69,8 +71,14 @@ public static class NativeAppHost
 
     private static void Reparent(IntPtr childHwnd, IntPtr parentHwnd, CellBounds bounds)
     {
+        // SetParent alone does not turn a top-level window into a real child window —
+        // per Microsoft's own docs, it doesn't touch WS_CHILD/WS_POPUP. Without this,
+        // the window keeps behaving like an independent top-level window (can render
+        // over the whole display instead of being clipped to its cell) even though
+        // SetParent "succeeded". WS_POPUP and WS_CHILD are mutually exclusive.
         var style = GetWindowLongPtr(childHwnd, GWL_STYLE).ToInt64();
-        style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU);
+        style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_POPUP);
+        style |= WS_CHILD;
         SetWindowLongPtr(childHwnd, GWL_STYLE, (IntPtr)style);
 
         SetParent(childHwnd, parentHwnd);

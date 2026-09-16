@@ -41,9 +41,15 @@ Still open: the actual list of dashboards/apps to bind per cell (browser URL vs.
 ## Native app reparenting: real limitations found on hardware (2026-09-16)
 Tested against Windows 11's built-in Notepad, Paint, and File Explorer as stand-ins while gathering the real app list. All three are modern MSIX-packaged/singleton apps, which don't behave like the "standard windowed apps" the architecture assumes:
 - **Notepad, File Explorer:** the launched process never produces a discoverable top-level window (MSIX redirection stub / singleton shell process) — `NativeAppHost.AttachAsync` correctly times out, retries, and gives up after 5 attempts without leaking processes (fixed two real bugs here: cells that failed on their *first* attempt used to never retry, and overlapping watchdog-triggered retries used to leak an orphaned process per attempt).
-- **Paint:** does reparent and render live content, but its window ignores the forced `SetWindowPos` resize and overflows into neighboring cells — same class of issue as Character Map during Phase 1 testing. Not fixed; would require subclassing the target window's WndProc to intercept `WM_GETMINMAXINFO`, which is invasive for arbitrary third-party apps and out of scope for now.
+- **Paint:** reparents and renders live content correctly.
 
-This doesn't affect browser cells (WebView2) at all — Google, Google Maps, and YouTube all rendered correctly. It only matters if a real target dashboard turns out to be a modern packaged app rather than a classic Win32 executable.
+**Fixed same day:** reparented apps were rendering across the whole display instead of being confined to their cell. Two root causes, both fixed:
+1. `SetParent` alone does not turn a window into a real Win32 child — per Microsoft's own docs, it doesn't touch the `WS_CHILD`/`WS_POPUP` style bits. Without explicitly flipping those, the window keeps behaving like an independent top-level window regardless of what `SetParent` reports. Fixed in `NativeAppHost.Reparent`.
+2. The compositor process had no explicit DPI-awareness manifest, causing Windows to virtualize the coordinates/sizes passed to `SetWindowPos` for reparented windows (observed as an exact 0.8x = 1/1.25 scale-down, matching this machine's 125% display scaling). Fixed with an explicit `PerMonitorV2` `app.manifest`.
+
+After both fixes, X-position and width land exactly on the cell boundary. A smaller, separate cosmetic issue remains: some apps (Character Map, Paint) don't fully honor the forced *height* — they still shrink to their own preferred height, leaving empty space below rather than overflowing. Not pursued further; would need WndProc subclassing to intercept `WM_GETMINMAXINFO`, which is invasive for arbitrary third-party apps.
+
+This doesn't affect browser cells (WebView2) at all — Google, Google Maps, and YouTube all rendered correctly throughout.
 
 ## Testing
 The user has direct access to the real target hardware (the actual workstation, hub, and GPU) and will test there — don't assume a dev-only simulated environment is equivalent, especially for Phase 2 reliability work (reboot behavior, driver updates, signal loss) which only shows up on real hardware.
