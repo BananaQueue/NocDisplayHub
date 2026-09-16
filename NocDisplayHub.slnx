@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="NocDisplayHub.Core/NocDisplayHub.Core.csproj" />
+  <Project Path="NocDisplayHub.Tests/NocDisplayHub.Tests.csproj" />
+  <Project Path="NocDisplayHub/NocDisplayHub.csproj" />
+</Solution>

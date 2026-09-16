@@ -1,0 +1,79 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using NocDisplayHub.Core.Bindings;
+
+namespace NocDisplayHub.Compositor;
+
+/// <summary>
+/// Launches a native executable and reparents its top-level window into a
+/// compositor cell via Win32 SetParent. This keeps the window's own message
+/// loop and input handling intact, so it stays clickable/interactive without
+/// any extra input-injection work — the trade-off documented in the spec for
+/// choosing reparenting over capture-based rendering.
+/// </summary>
+public static class NativeAppHost
+{
+    private const int GWL_STYLE = -16;
+    private const long WS_CAPTION = 0x00C00000;
+    private const long WS_THICKFRAME = 0x00040000;
+    private const long WS_SYSMENU = 0x00080000;
+    private const uint SWP_NOZORDER = 0x0004;
+    private const uint SWP_FRAMECHANGED = 0x0020;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    /// <summary>
+    /// Starts the process at <paramref name="exePath"/>, waits for its main
+    /// window to appear, strips its title bar/border, and reparents it under
+    /// <paramref name="parentHwnd"/> at <paramref name="bounds"/>.
+    /// </summary>
+    public static async Task<Process> AttachAsync(string exePath, IntPtr parentHwnd, CellBounds bounds, TimeSpan? timeout = null)
+    {
+        var process = Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true })
+            ?? throw new InvalidOperationException($"Failed to start process: {exePath}");
+
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(15));
+        while (process.MainWindowHandle == IntPtr.Zero)
+        {
+            if (process.HasExited)
+            {
+                throw new InvalidOperationException($"Process exited before a main window appeared: {exePath}");
+            }
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException($"Timed out waiting for a main window: {exePath}");
+            }
+            await Task.Delay(100);
+            process.Refresh();
+        }
+
+        Reparent(process.MainWindowHandle, parentHwnd, bounds);
+        return process;
+    }
+
+    private static void Reparent(IntPtr childHwnd, IntPtr parentHwnd, CellBounds bounds)
+    {
+        var style = GetWindowLongPtr(childHwnd, GWL_STYLE).ToInt64();
+        style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU);
+        SetWindowLongPtr(childHwnd, GWL_STYLE, (IntPtr)style);
+
+        SetParent(childHwnd, parentHwnd);
+        Reposition(childHwnd, bounds);
+    }
+
+    /// <summary>Repositions an already-reparented window, e.g. after a preset switch changes its cell's bounds.</summary>
+    public static void Reposition(IntPtr childHwnd, CellBounds bounds)
+    {
+        SetWindowPos(childHwnd, IntPtr.Zero, (int)bounds.X, (int)bounds.Y, (int)bounds.Width, (int)bounds.Height, SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
+}

@@ -1,0 +1,25 @@
+[
+  {
+    "MonitorIndex": 0,
+    "PaneType": "web",
+    "Source": "https://grafana.local/d/abc",
+    "RefreshSeconds": 300
+  },
+  {
+    "MonitorIndex": 1,
+    "PaneType": "externalApp",
+    "Source": "C:\\Apps\\NetMon.exe",
+    "RefreshSeconds": null
+  },
+  {
+    "MonitorIndex": 2,
+    "PaneType": "vidoe",
+    "Source": "https://some-video-wall/feed"
+  },
+  {
+    "MonitorIndex": 3,
+    "PaneType": "chart",
+    "Source": "internal://tickets",
+    "RefreshSeconds": 60
+  }
+]

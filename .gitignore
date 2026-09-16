@@ -1,0 +1,20 @@
+# Build artifacts
+bin/
+obj/
+publish/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Runtime app data (profile/activity log are written to %LOCALAPPDATA%, not here, but just in case)
+*.log
