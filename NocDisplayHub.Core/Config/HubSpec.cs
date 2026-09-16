@@ -6,16 +6,14 @@ namespace NocDisplayHub.Core.Config;
 /// </summary>
 public static class HubSpec
 {
-    // CONFIRMED on real hardware (2026-09-16): the hub's combined input for
-    // 2x3 mode is 1920x1080, and PresetLayout's even 3x2 split lines up with
-    // the physical monitor bezels exactly — no extra bezel-gap inset needed
-    // for this hub/monitor combination in 2x3 mode.
+    // CONFIRMED on real hardware (2026-09-16): the hub's combined input is
+    // 1920x1080, and PresetLayout's even split lines up with the physical
+    // monitor bezels exactly for all five presets (1x1, 1x2, 2x1, 2x2, 2x3)
+    // — no bezel-gap inset needed for this hub/monitor combination.
     public const int InputWidth = 1920;
     public const int InputHeight = 1080;
 
-    // Confirmed true for 2x3 mode (see above). Not yet confirmed for the
-    // other presets (1x1, 1x2, 2x1, 2x2) — an even split happening to match
-    // for 2x3 doesn't guarantee the hub cuts every mode evenly.
+    // Confirmed false across all five presets (see above).
     public const bool HasBezelCompensation = false;
 
     // TODO_HUB_SPEC: confirm whether the hub exposes any per-port health/status

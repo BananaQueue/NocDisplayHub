@@ -4,8 +4,8 @@ Use this as the starting checklist when working with Claude Code. Read `CLAUDE.m
 
 ## 0. Prerequisites (do before writing code)
 - [x] Confirm the hub's exact expected input resolution for its 2x3 preset — confirmed 2026-09-16: 1920x1080, real hardware
-- [x] Confirm the hub's physical split-point pixel coordinates for that resolution — confirmed 2026-09-16: even 3x2 split lines up with the physical bezels exactly for 2x3 mode. Other presets (1x1, 1x2, 2x1, 2x2) not yet checked on hardware.
-- [ ] Confirm whether the hub does bezel compensation itself (moot for 2x3 — even split already lines up — but unconfirmed for other presets)
+- [x] Confirm the hub's physical split-point pixel coordinates for that resolution — confirmed 2026-09-16 on real hardware: even split lines up with the physical bezels exactly for all five presets (1x1, 1x2, 2x1, 2x2, 2x3)
+- [x] Confirm whether the hub does bezel compensation itself — confirmed 2026-09-16: not needed, even split already lines up across all presets
 - [ ] Check whether the hub exposes any per-port status feed (serial/IP/CEC) — affects Phase 2, but worth knowing now
 - [ ] List every dashboard/app that needs to be pinned, and for each: is it a browser URL or a native executable?
 
