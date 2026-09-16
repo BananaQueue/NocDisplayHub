@@ -205,8 +205,11 @@ public partial class CompositorWindow : Window
             // Inset explicitly so the border is reliably visible regardless of how precisely a
             // given app fills its window.
             var insetBounds = InsetForBorder(runtime.Cell.Bounds);
-            var process = await NativeAppHost.AttachAsync(runtime.Cell.Binding!.Value, parentHwnd, insetBounds);
-            runtime.Process = process;
+            var result = await NativeAppHost.AttachAsync(runtime.Cell.Binding!.Value, parentHwnd, insetBounds);
+            runtime.Process = result.Process;
+            // Explorer's window belongs to the long-lived shell process, not something we
+            // launched — track the window handle directly since we can never own/kill that process.
+            runtime.TrackedWindowHandle = result.Process is null ? result.WindowHandle : null;
             runtime.ConsecutiveFailures = 0;
             runtime.Border.Child = null; // the reparented Win32 window overlays this Border directly.
             SetBorderStatus(runtime, CellStatus.Healthy, Brushes.Green);
@@ -245,6 +248,17 @@ public partial class CompositorWindow : Window
             if (runtime.Cell.Binding?.Type != BindingType.NativeApp) continue;
             if (runtime.GaveUp) continue;
             if (runtime.AttemptInProgress) continue; // a launch is already awaiting — don't start another
+
+            if (runtime.TrackedWindowHandle is { } hwnd)
+            {
+                // Explorer's window — no process to check, only whether the window itself still exists.
+                if (NativeAppHost.IsWindowAlive(hwnd)) continue; // still open
+                ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, "Tracked window closed unexpectedly; relaunching");
+                runtime.TrackedWindowHandle = null;
+                _ = StartNativeAppCellAsync(runtime);
+                continue;
+            }
+
             if (runtime.Process is { HasExited: false }) continue; // still running fine
 
             if (runtime.Process is { HasExited: true })
@@ -357,7 +371,15 @@ public partial class CompositorWindow : Window
         {
             try
             {
-                if (runtime.Process is { HasExited: false } process) process.CloseMainWindow();
+                if (runtime.TrackedWindowHandle is { } hwnd)
+                {
+                    // Never touch the owning process here — it's the shell. Just ask this one window to close.
+                    if (NativeAppHost.IsWindowAlive(hwnd)) NativeAppHost.CloseWindow(hwnd);
+                }
+                else if (runtime.Process is { HasExited: false } process)
+                {
+                    process.CloseMainWindow();
+                }
             }
             catch
             {

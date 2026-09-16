@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using NocDisplayHub.Core.Bindings;
 
 namespace NocDisplayHub.Compositor;
@@ -14,6 +16,21 @@ namespace NocDisplayHub.Compositor;
 /// uncontrolled side effect instead of ever succeeding.
 /// </summary>
 public sealed class ProcessExitedWithoutWindowException(string message) : Exception(message);
+
+/// <summary>
+/// Result of attaching a cell to a native app. <see cref="Process"/> is set
+/// when we launched and own the process's lifecycle (the normal case — the
+/// watchdog checks <c>Process.HasExited</c> and it's safe to kill on cleanup).
+/// It's null for singleton-shell-hosted windows (e.g. Explorer), where the
+/// window belongs to a long-lived shell process we must never kill or close
+/// wholesale — <see cref="WindowHandle"/> is what the caller should track
+/// and close/watch instead.
+/// </summary>
+public sealed class AttachResult
+{
+    public required IntPtr WindowHandle { get; init; }
+    public Process? Process { get; init; }
+}
 
 /// <summary>
 /// Launches a native executable and reparents its top-level window into a
@@ -32,6 +49,10 @@ public static class NativeAppHost
     private const long WS_CHILD = 0x40000000;
     private const uint SWP_NOZORDER = 0x0004;
     private const uint SWP_FRAMECHANGED = 0x0020;
+    private const uint WM_CLOSE = 0x0010;
+
+    /// <summary>Window class of a File Explorer folder window — stable since Windows Vista, still current on Windows 11.</summary>
+    private const string ExplorerWindowClass = "CabinetWClass";
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
@@ -45,13 +66,37 @@ public static class NativeAppHost
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
     /// <summary>
-    /// Starts the process at <paramref name="exePath"/>, waits for its main
-    /// window to appear, strips its title bar/border, and reparents it under
-    /// <paramref name="parentHwnd"/> at <paramref name="bounds"/>.
+    /// Starts the app at <paramref name="exePath"/> and reparents its window into
+    /// a compositor cell. Handles two shapes of app: a normal app whose own
+    /// launched process owns its window, and a singleton-shell-hosted app (only
+    /// Explorer for now) whose launched process exits immediately after asking
+    /// the already-running shell to open a window we don't own the process for.
     /// </summary>
-    public static async Task<Process> AttachAsync(string exePath, IntPtr parentHwnd, CellBounds bounds, TimeSpan? timeout = null)
+    public static async Task<AttachResult> AttachAsync(string exePath, IntPtr parentHwnd, CellBounds bounds, TimeSpan? timeout = null)
     {
+        if (IsExplorer(exePath))
+        {
+            return await AttachShellWindowAsync(exePath, parentHwnd, bounds, timeout);
+        }
+
         var process = Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true })
             ?? throw new InvalidOperationException($"Failed to start process: {exePath}");
 
@@ -77,8 +122,61 @@ public static class NativeAppHost
         }
 
         Reparent(process.MainWindowHandle, parentHwnd, bounds);
-        return process;
+        return new AttachResult { WindowHandle = process.MainWindowHandle, Process = process };
     }
+
+    private static bool IsExplorer(string exePath) =>
+        string.Equals(Path.GetFileName(exePath), "explorer.exe", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// explorer.exe hands the request to the already-running shell (which opens a
+    /// real Explorer folder window) and exits immediately — our launched process
+    /// never owns a window. Instead of chasing that process, we watch for the new
+    /// top-level Explorer window that appears and reparent that directly. The
+    /// window belongs to the persistent shell process, which we must never kill —
+    /// AttachResult.Process is left null so callers know to track/close the window
+    /// handle itself, not a process.
+    /// </summary>
+    private static async Task<AttachResult> AttachShellWindowAsync(string exePath, IntPtr parentHwnd, CellBounds bounds, TimeSpan? timeout)
+    {
+        var before = new HashSet<IntPtr>(FindTopLevelWindowsByClass(ExplorerWindowClass));
+
+        using (Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true })) { }
+
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        while (DateTime.UtcNow < deadline)
+        {
+            var newWindow = FindTopLevelWindowsByClass(ExplorerWindowClass).FirstOrDefault(h => !before.Contains(h));
+            if (newWindow != IntPtr.Zero)
+            {
+                Reparent(newWindow, parentHwnd, bounds);
+                return new AttachResult { WindowHandle = newWindow, Process = null };
+            }
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException($"Timed out waiting for a new Explorer window to appear: {exePath}");
+    }
+
+    private static List<IntPtr> FindTopLevelWindowsByClass(string className)
+    {
+        var result = new List<IntPtr>();
+        EnumWindows((hWnd, _) =>
+        {
+            if (!IsWindowVisible(hWnd)) return true;
+            var sb = new StringBuilder(256);
+            GetClassName(hWnd, sb, sb.Capacity);
+            if (sb.ToString() == className) result.Add(hWnd);
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
+
+    /// <summary>True if the given window still exists — used for cells tracked by window handle rather than owned process.</summary>
+    public static bool IsWindowAlive(IntPtr hWnd) => IsWindow(hWnd);
+
+    /// <summary>Asks a specific window to close itself, without touching whatever process owns it — safe for shell-owned windows.</summary>
+    public static void CloseWindow(IntPtr hWnd) => PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
 
     private static void Reparent(IntPtr childHwnd, IntPtr parentHwnd, CellBounds bounds)
     {

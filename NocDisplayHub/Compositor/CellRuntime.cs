@@ -19,6 +19,14 @@ public sealed class CellRuntime
     public WebView2? WebView { get; set; }
     public int ConsecutiveFailures { get; set; }
 
+    /// <summary>
+    /// Set for singleton-shell-hosted windows (Explorer) instead of Process — we
+    /// reparented this window but don't own its process (it belongs to the
+    /// long-lived shell), so liveness is checked via NativeAppHost.IsWindowAlive
+    /// and cleanup via NativeAppHost.CloseWindow, never Process.Kill/CloseMainWindow.
+    /// </summary>
+    public IntPtr? TrackedWindowHandle { get; set; }
+
     /// <summary>Set once a cell exceeds the retry cap — the watchdog stops touching it until the app restarts.</summary>
     public bool GaveUp { get; set; }
 
