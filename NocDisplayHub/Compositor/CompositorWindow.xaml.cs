@@ -201,6 +201,15 @@ public partial class CompositorWindow : Window
             runtime.Border.Child = null; // the reparented Win32 window overlays this Border directly.
             SetBorderStatus(runtime, CellStatus.Healthy, Brushes.Green);
         }
+        catch (ProcessExitedWithoutWindowException ex)
+        {
+            // The process already handed off to something we don't control (e.g. explorer.exe
+            // asking the running shell to open a window) before exiting. That side effect already
+            // happened — retrying would just repeat it, leaving another uncontrolled window behind
+            // each time. Give up immediately rather than retrying blindly.
+            ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, $"Failed to launch native app: {ex.Message}");
+            LogAndGiveUp(runtime, "Process exited immediately after starting — likely handed off to an already-running instance we can't control (not retrying, to avoid repeating the side effect)");
+        }
         catch (Exception ex)
         {
             runtime.ConsecutiveFailures++;

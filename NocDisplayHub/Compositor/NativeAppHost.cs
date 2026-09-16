@@ -5,6 +5,17 @@ using NocDisplayHub.Core.Bindings;
 namespace NocDisplayHub.Compositor;
 
 /// <summary>
+/// Thrown when the launched process exits on its own right after starting,
+/// without ever producing a window — seen with singleton/shell-hosted apps
+/// (e.g. `explorer.exe`, which hands the request to the already-running
+/// shell and then exits). Unlike a timeout, this means a real side effect
+/// likely already happened (a window opened somewhere we don't control), so
+/// the caller should not blindly retry — each retry repeats the same
+/// uncontrolled side effect instead of ever succeeding.
+/// </summary>
+public sealed class ProcessExitedWithoutWindowException(string message) : Exception(message);
+
+/// <summary>
 /// Launches a native executable and reparents its top-level window into a
 /// compositor cell via Win32 SetParent. This keeps the window's own message
 /// loop and input handling intact, so it stays clickable/interactive without
@@ -49,7 +60,7 @@ public static class NativeAppHost
         {
             if (process.HasExited)
             {
-                throw new InvalidOperationException($"Process exited before a main window appeared: {exePath}");
+                throw new ProcessExitedWithoutWindowException($"Process exited before a main window appeared: {exePath}");
             }
             if (DateTime.UtcNow > deadline)
             {
