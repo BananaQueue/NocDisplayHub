@@ -39,6 +39,7 @@ namespace NocDisplayHub.Compositor;
 public partial class CompositorWindow : Window
 {
     private const int MaxConsecutiveFailures = 5;
+    private const double CellBorderThickness = 4;
     private static readonly TimeSpan WatchdogInterval = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan FrozenCheckInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FrozenThreshold = TimeSpan.FromMinutes(5);
@@ -91,7 +92,7 @@ public partial class CompositorWindow : Window
         {
             var border = new Border
             {
-                BorderThickness = new Thickness(4),
+                BorderThickness = new Thickness(CellBorderThickness),
                 Background = Brushes.Black,
                 Width = cell.Bounds.Width,
                 Height = cell.Bounds.Height,
@@ -195,7 +196,16 @@ public partial class CompositorWindow : Window
         var parentHwnd = new WindowInteropHelper(this).Handle;
         try
         {
-            var process = await NativeAppHost.AttachAsync(runtime.Cell.Binding!.Value, parentHwnd, runtime.Cell.Bounds);
+            // Browser cells are WPF children of the Border, so WPF automatically insets them
+            // within its BorderThickness padding, keeping the colored status border visible.
+            // Reparented native windows are separate HWNDs positioned by raw SetWindowPos with
+            // no such automatic inset — sized to the cell's exact outer bounds, they can cover
+            // the border completely if the app fills its window precisely (confirmed on hardware:
+            // Character Map did this while Paint, filling slightly short, happened not to).
+            // Inset explicitly so the border is reliably visible regardless of how precisely a
+            // given app fills its window.
+            var insetBounds = InsetForBorder(runtime.Cell.Bounds);
+            var process = await NativeAppHost.AttachAsync(runtime.Cell.Binding!.Value, parentHwnd, insetBounds);
             runtime.Process = process;
             runtime.ConsecutiveFailures = 0;
             runtime.Border.Child = null; // the reparented Win32 window overlays this Border directly.
@@ -314,6 +324,13 @@ public partial class CompositorWindow : Window
         };
         SetBorderStatus(runtime, CellStatus.Dark, Brushes.Red);
     }
+
+    /// <summary>Shrinks a cell's bounds by the border thickness on every side, so a reparented native window sits inside the colored status border instead of potentially covering it.</summary>
+    private static CellBounds InsetForBorder(CellBounds bounds) => new(
+        bounds.X + CellBorderThickness,
+        bounds.Y + CellBorderThickness,
+        bounds.Width - (2 * CellBorderThickness),
+        bounds.Height - (2 * CellBorderThickness));
 
     /// <summary>Updates only the border color and the cell's recorded status — never touches Child.</summary>
     private static void SetBorderStatus(CellRuntime runtime, CellStatus status, Brush borderBrush)
