@@ -191,6 +191,7 @@ public partial class CompositorWindow : Window
         };
         SetBorderStatus(runtime, CellStatus.Restarting, Brushes.Orange);
 
+        runtime.AttemptInProgress = true;
         var parentHwnd = new WindowInteropHelper(this).Handle;
         try
         {
@@ -209,7 +210,12 @@ public partial class CompositorWindow : Window
             {
                 LogAndGiveUp(runtime, "Too many launch failures in a row");
             }
-            // else: leave the "Restarting…" placeholder up; the next watchdog tick tries again.
+            // else: leave the "Restarting…" placeholder up; RunWatchdogPass retries
+            // this cell (Process is still null) on its next tick.
+        }
+        finally
+        {
+            runtime.AttemptInProgress = false;
         }
     }
 
@@ -218,10 +224,17 @@ public partial class CompositorWindow : Window
         foreach (var runtime in _runtimes.Values)
         {
             if (runtime.Cell.Binding?.Type != BindingType.NativeApp) continue;
-            if (runtime.Process is null) continue;
-            if (!runtime.Process.HasExited) continue;
+            if (runtime.GaveUp) continue;
+            if (runtime.AttemptInProgress) continue; // a launch is already awaiting — don't start another
+            if (runtime.Process is { HasExited: false }) continue; // still running fine
 
-            ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, "Native app exited unexpectedly; relaunching");
+            if (runtime.Process is { HasExited: true })
+            {
+                ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, "Native app exited unexpectedly; relaunching");
+            }
+            // else: Process is null — this cell never attached in the first place (e.g. a bad
+            // path); retry it too, rather than leaving "Restarting…" up forever.
+
             runtime.Process = null;
             _ = StartNativeAppCellAsync(runtime);
         }
@@ -280,6 +293,7 @@ public partial class CompositorWindow : Window
 
     private void LogAndGiveUp(CellRuntime runtime, string reason)
     {
+        runtime.GaveUp = true;
         ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, $"Giving up: {reason}");
         runtime.Border.Child = new TextBlock
         {

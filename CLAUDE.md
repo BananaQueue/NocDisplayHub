@@ -34,7 +34,16 @@ A Windows desktop app for a single NOC/datacenter workstation. It drives 6 monit
 Follow the phase order in the spec's "Procedural Roadmap" and "Timeline" sections: Foundation → Reliability → Content refresh → Polish. Do not jump ahead to Phase 3 features while Phase 1 is incomplete — reliability work in Phase 2 is explicitly called out as the highest-risk, least-compressible phase and depends on Phase 1 being solid first.
 
 ## Open items that block certain work
-Some tasks can't be finished until the user provides hardware-specific facts (see spec's "Open Questions"): the hub's exact expected input resolution and split-point coordinates, whether it does bezel compensation, and whether it exposes any per-port health/status feed. Where code depends on these, use clearly marked placeholder constants (e.g. `TODO_HUB_SPEC`) rather than guessing real numbers, and flag it back to the user instead of silently assuming a value.
+**Resolved 2026-09-16:** the hub's input resolution, split-point coordinates, and bezel compensation are all confirmed on real hardware — see `HubSpec.cs`. The per-port health/status feed question is deliberately not being pursued for v1 (went-dark detection stays at the crash-level watchdog already built).
+
+Still open: the actual list of dashboards/apps to bind per cell (browser URL vs. native exe, per app) — being gathered now.
+
+## Native app reparenting: real limitations found on hardware (2026-09-16)
+Tested against Windows 11's built-in Notepad, Paint, and File Explorer as stand-ins while gathering the real app list. All three are modern MSIX-packaged/singleton apps, which don't behave like the "standard windowed apps" the architecture assumes:
+- **Notepad, File Explorer:** the launched process never produces a discoverable top-level window (MSIX redirection stub / singleton shell process) — `NativeAppHost.AttachAsync` correctly times out, retries, and gives up after 5 attempts without leaking processes (fixed two real bugs here: cells that failed on their *first* attempt used to never retry, and overlapping watchdog-triggered retries used to leak an orphaned process per attempt).
+- **Paint:** does reparent and render live content, but its window ignores the forced `SetWindowPos` resize and overflows into neighboring cells — same class of issue as Character Map during Phase 1 testing. Not fixed; would require subclassing the target window's WndProc to intercept `WM_GETMINMAXINFO`, which is invasive for arbitrary third-party apps and out of scope for now.
+
+This doesn't affect browser cells (WebView2) at all — Google, Google Maps, and YouTube all rendered correctly. It only matters if a real target dashboard turns out to be a modern packaged app rather than a classic Win32 executable.
 
 ## Testing
 The user has direct access to the real target hardware (the actual workstation, hub, and GPU) and will test there — don't assume a dev-only simulated environment is equivalent, especially for Phase 2 reliability work (reboot behavior, driver updates, signal loss) which only shows up on real hardware.

@@ -19,6 +19,16 @@ public sealed class CellRuntime
     public WebView2? WebView { get; set; }
     public int ConsecutiveFailures { get; set; }
 
+    /// <summary>Set once a cell exceeds the retry cap — the watchdog stops touching it until the app restarts.</summary>
+    public bool GaveUp { get; set; }
+
+    /// <summary>
+    /// True while a launch attempt is awaiting (native app attach can take up to
+    /// its timeout). Without this, the watchdog's 3s tick would start another
+    /// overlapping attempt for the same cell before the first one finishes.
+    /// </summary>
+    public bool AttemptInProgress { get; set; }
+
     /// <summary>When this cell's browser content was last (re)loaded — drives scheduled refresh.</summary>
     public DateTime LastLoadedUtc { get; set; } = DateTime.UtcNow;
 }

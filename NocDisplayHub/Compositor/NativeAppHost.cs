@@ -51,6 +51,12 @@ public static class NativeAppHost
             }
             if (DateTime.UtcNow > deadline)
             {
+                // The process is still alive but never produced a window we can find — seen with
+                // MSIX-packaged apps (e.g. Windows 11's Store Notepad/Paint), where the launched
+                // process is a redirection stub that hands off to a different process entirely.
+                // Kill it rather than leaving it running: every watchdog retry would otherwise
+                // orphan another one of these instead of ever cleaning up.
+                TryKill(process);
                 throw new TimeoutException($"Timed out waiting for a main window: {exePath}");
             }
             await Task.Delay(100);
@@ -75,5 +81,17 @@ public static class NativeAppHost
     public static void Reposition(IntPtr childHwnd, CellBounds bounds)
     {
         SetWindowPos(childHwnd, IntPtr.Zero, (int)bounds.X, (int)bounds.Y, (int)bounds.Width, (int)bounds.Height, SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // Best-effort cleanup only — it may have exited in the meantime.
+        }
     }
 }
