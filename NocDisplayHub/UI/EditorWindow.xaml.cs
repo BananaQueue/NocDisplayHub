@@ -248,7 +248,13 @@ public partial class EditorWindow : Window
         if (string.IsNullOrWhiteSpace(ValueTextBox.Text)) return;
 
         var typeTag = (string)((ComboBoxItem)SourceTypeCombo.SelectedItem).Tag;
-        var binding = new CellBinding(Enum.Parse<BindingType>(typeTag), ValueTextBox.Text.Trim());
+        var type = Enum.Parse<BindingType>(typeTag);
+        var value = ValueTextBox.Text.Trim();
+        // A bare domain like "www.google.com" is what someone naturally types — normalize it the
+        // way a browser address bar would, rather than letting a scheme-less URL reach the
+        // compositor's Uri constructor, which throws (confirmed live: it crashed the whole wall).
+        if (type == BindingType.Browser) value = UrlNormalizer.NormalizeBrowserUrl(value);
+        var binding = new CellBinding(type, value);
 
         if (_drilldownTop is { } top)
         {

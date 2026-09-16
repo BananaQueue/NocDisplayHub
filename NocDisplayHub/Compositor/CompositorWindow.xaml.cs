@@ -104,8 +104,28 @@ public partial class CompositorWindow : Window
             var runtime = new CellRuntime { Cell = cell, Border = border };
             _runtimes[CellKey.Of(cell)] = runtime;
 
-            StartContent(runtime);
+            try
+            {
+                StartContent(runtime);
+            }
+            catch (Exception ex)
+            {
+                // A single malformed binding (confirmed live: a URL missing "https://" threw
+                // here) must never take down the other 5 working cells — isolate the failure
+                // to just this one cell instead of letting it escape BuildCells entirely.
+                LogAndGiveUp(runtime, $"Failed to start cell content: {ex.Message}", displayText: DescribeStartupError(runtime, ex));
+            }
         }
+    }
+
+    /// <summary>Produces a short, specific on-screen message for a cell that failed to start, instead of a generic "Dark".</summary>
+    private static string DescribeStartupError(CellRuntime runtime, Exception ex)
+    {
+        if (runtime.Cell.Binding?.Type == BindingType.Browser && ex is UriFormatException)
+        {
+            return $"Invalid URL:\n{runtime.Cell.Binding.Value}";
+        }
+        return "Error:\n" + ex.Message;
     }
 
     /// <summary>(Re)starts whatever a cell is bound to. Used for the initial render and every watchdog-triggered relaunch.</summary>
@@ -324,15 +344,17 @@ public partial class CompositorWindow : Window
         }
     }
 
-    private void LogAndGiveUp(CellRuntime runtime, string reason)
+    private void LogAndGiveUp(CellRuntime runtime, string reason, string? displayText = null)
     {
         runtime.GaveUp = true;
         ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, $"Giving up: {reason}");
         runtime.Border.Child = new TextBlock
         {
-            Text = "Dark",
+            Text = displayText ?? "Dark",
             Foreground = Brushes.White,
             FontWeight = FontWeights.Bold,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };

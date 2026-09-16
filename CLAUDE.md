@@ -55,5 +55,21 @@ After both fixes, X-position and width land exactly on the cell boundary in ever
 
 This doesn't affect browser cells (WebView2) at all — Google, Google Maps, and YouTube all rendered correctly throughout.
 
+## Critical bug found via real usage: one bad binding blacked out the whole wall (2026-09-17)
+The user bound a cell to `www.google.com` (no `https://`) via the editor, clicked "Launch Wall", and their screen went black. Root cause, confirmed live from `activity.log`:
+
+```
+Unhandled exception: System.UriFormatException: Invalid URI: The format of the URI could not be determined.
+   at NocDisplayHub.Compositor.CompositorWindow.StartBrowserCell(...)
+```
+
+`new Uri(value)` throws for a scheme-less string. That alone would only need to break one cell — but `BuildCells`'s `foreach` loop had no per-cell exception handling, so the exception escaped the loop entirely partway through the *first* cell, meaning **none of the 6 cells were ever built** — not even the 5 that had nothing wrong with them. The global `DispatcherUnhandledException` handler caught it and kept the app alive (as designed), but the window was left showing nothing but its bare black background — indistinguishable from a frozen/dead screen. The broken "NOC Display Wall" window was still open and had to be closed manually.
+
+**Fixed, two layers:**
+1. **Prevention** — `UrlNormalizer.NormalizeBrowserUrl` (Core, unit-tested) prepends `https://` to a bare domain, called from the editor's `ApplyToCell_Click` before saving. The common mistake (typing a domain the way you would in a browser bar) never reaches the compositor at all.
+2. **Isolation** — `BuildCells` now wraps each cell's `StartContent` call in its own try/catch. A failure shows a specific, readable error *on that one cell* (red border, e.g. "Invalid URL:\n<value>") via an extended `LogAndGiveUp(runtime, reason, displayText)`, and — critically — the loop continues to the next cell instead of aborting. Verified live: a deliberately malformed URL (`"not a valid url at all!!"`) in one cell showed a clear error while the other two cells (Google, YouTube) rendered completely healthy next to it.
+
+This same isolation now protects against *any* unexpected exception during cell startup, not just malformed URLs — a defensive fix, not a narrow one.
+
 ## Testing
 The user has direct access to the real target hardware (the actual workstation, hub, and GPU) and will test there — don't assume a dev-only simulated environment is equivalent, especially for Phase 2 reliability work (reboot behavior, driver updates, signal loss) which only shows up on real hardware.
