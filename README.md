@@ -12,8 +12,8 @@ See [noc-display-app-spec.md](noc-display-app-spec.md) for the full product spec
 
 All five spec phases are implemented and verified end-to-end (editor → persistence → wall render), but the app has **not yet run against the real hub hardware**. Everything sizing-related uses placeholder constants until the real numbers are confirmed:
 
-- [ ] Hub's exact input resolution and physical split-point coordinates (`TODO_HUB_SPEC` in [HubSpec.cs](NocDisplayHub.Core/Config/HubSpec.cs))
-- [ ] Whether the hub does bezel compensation
+- [x] Hub's input resolution and split-point coordinates for 2x3 mode — confirmed 2026-09-16 on real hardware: 1920x1080, even split lines up with the physical bezels exactly. Other presets (1x1, 1x2, 2x1, 2x2) not yet checked.
+- [ ] Whether the hub does bezel compensation (moot for 2x3, unconfirmed for other presets)
 - [ ] Whether the hub exposes a per-port health/status feed (would upgrade the current crash-only "went dark" detection to a true physical-disconnect signal)
 - [ ] Pilot run on the actual 6-monitor wall
 

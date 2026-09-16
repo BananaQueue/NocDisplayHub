@@ -3,9 +3,9 @@
 Use this as the starting checklist when working with Claude Code. Read `CLAUDE.md` and `noc-display-app-spec.md` first. Work through these roughly in order — later tasks depend on earlier ones.
 
 ## 0. Prerequisites (do before writing code)
-- [ ] Confirm the hub's exact expected input resolution for its 2x3 preset (and other presets you may use)
-- [ ] Confirm the hub's physical split-point pixel coordinates for that resolution
-- [ ] Confirm whether the hub does bezel compensation itself
+- [x] Confirm the hub's exact expected input resolution for its 2x3 preset — confirmed 2026-09-16: 1920x1080, real hardware
+- [x] Confirm the hub's physical split-point pixel coordinates for that resolution — confirmed 2026-09-16: even 3x2 split lines up with the physical bezels exactly for 2x3 mode. Other presets (1x1, 1x2, 2x1, 2x2) not yet checked on hardware.
+- [ ] Confirm whether the hub does bezel compensation itself (moot for 2x3 — even split already lines up — but unconfirmed for other presets)
 - [ ] Check whether the hub exposes any per-port status feed (serial/IP/CEC) — affects Phase 2, but worth knowing now
 - [ ] List every dashboard/app that needs to be pinned, and for each: is it a browser URL or a native executable?
 
