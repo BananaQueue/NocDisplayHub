@@ -41,6 +41,26 @@ public static class HubDisplayLocator
 
     private const uint MonitorInfoFPrimary = 0x1;
 
+    private readonly record struct MonitorEntry(int Left, int Top, int Width, int Height, Rect WorkArea, bool IsPrimary);
+
+    private static List<MonitorEntry> EnumerateMonitors()
+    {
+        var monitors = new List<MonitorEntry>();
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr hMonitor, IntPtr _, ref Rect rect, IntPtr _) =>
+        {
+            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            if (GetMonitorInfo(hMonitor, ref info))
+            {
+                monitors.Add(new MonitorEntry(
+                    info.Monitor.Left, info.Monitor.Top,
+                    info.Monitor.Right - info.Monitor.Left, info.Monitor.Bottom - info.Monitor.Top,
+                    info.WorkArea, (info.Flags & MonitorInfoFPrimary) != 0));
+            }
+            return true;
+        }, IntPtr.Zero);
+        return monitors;
+    }
+
     /// <summary>
     /// Returns the top-left corner (in virtual-desktop pixels) of the screen
     /// that's the hub, or null if it can't tell (caller should fall back to
@@ -48,22 +68,9 @@ public static class HubDisplayLocator
     /// </summary>
     public static (int Left, int Top)? FindHubOrigin()
     {
-        var matches = new List<(int Left, int Top, bool IsPrimary)>();
-
-        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr hMonitor, IntPtr _, ref Rect rect, IntPtr _) =>
-        {
-            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-            if (GetMonitorInfo(hMonitor, ref info))
-            {
-                var width = info.Monitor.Right - info.Monitor.Left;
-                var height = info.Monitor.Bottom - info.Monitor.Top;
-                if (width == HubSpec.InputWidth && height == HubSpec.InputHeight)
-                {
-                    matches.Add((info.Monitor.Left, info.Monitor.Top, (info.Flags & MonitorInfoFPrimary) != 0));
-                }
-            }
-            return true;
-        }, IntPtr.Zero);
+        var matches = EnumerateMonitors()
+            .Where(m => m.Width == HubSpec.InputWidth && m.Height == HubSpec.InputHeight)
+            .ToList();
 
         if (matches.Count == 1)
         {
@@ -78,5 +85,38 @@ public static class HubDisplayLocator
         // the one non-primary match over a screen that's someone's main display.
         var nonPrimary = matches.Where(m => !m.IsPrimary).ToList();
         return nonPrimary.Count == 1 ? (nonPrimary[0].Left, nonPrimary[0].Top) : null;
+    }
+
+    /// <summary>
+    /// Returns the work area (in virtual-desktop pixels, taskbar excluded) of a screen
+    /// that ISN'T the hub — for pinning the editor to whatever's presumably the operator's
+    /// actual working monitor, rather than leaving it to WPF's own WindowStartupLocation
+    /// heuristics. Confirmed live: "CenterScreen" is not guaranteed to land on the
+    /// OS-designated primary monitor for a PerMonitorV2-aware app (our manifest applies
+    /// process-wide, not just to the compositor window) — its centering math resolves
+    /// against whichever monitor Windows' own placement heuristic assigns the new window
+    /// to at creation, which observably was the hub's own extended display, not the main
+    /// screen, when launched from a non-interactive context. Prefers the OS-designated
+    /// primary monitor among the non-hub matches, same assumption <see cref="FindHubOrigin"/>
+    /// already relies on (nobody sets the hub-fed output as primary). Returns null when
+    /// there's no unambiguous non-hub screen to pick (e.g. the real kiosk, which only has
+    /// the hub) — callers should fall back to their own default positioning in that case.
+    /// </summary>
+    public static (int Left, int Top, int Width, int Height)? FindEditorWorkArea()
+    {
+        var nonHub = EnumerateMonitors()
+            .Where(m => m.Width != HubSpec.InputWidth || m.Height != HubSpec.InputHeight)
+            .ToList();
+
+        var candidate = nonHub.Count switch
+        {
+            0 => (MonitorEntry?)null,
+            1 => nonHub[0],
+            _ => nonHub.Count(m => m.IsPrimary) == 1 ? nonHub.First(m => m.IsPrimary) : null,
+        };
+
+        if (candidate is not { } chosen) return null;
+        return (chosen.WorkArea.Left, chosen.WorkArea.Top,
+            chosen.WorkArea.Right - chosen.WorkArea.Left, chosen.WorkArea.Bottom - chosen.WorkArea.Top);
     }
 }

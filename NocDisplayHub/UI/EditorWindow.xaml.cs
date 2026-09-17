@@ -45,14 +45,36 @@ public partial class EditorWindow : Window
     {
         InitializeComponent();
 
-        // The XAML's 960x940 default is comfortable on a full-size monitor, but on a
-        // smaller/laptop screen it can be taller than the actual usable desktop area,
-        // pushing the bottom controls (Apply/Unassign, auto-launch checkbox) off-screen.
-        // Clamp to the work area (excludes the taskbar) before the window is ever shown,
-        // never below MinHeight/MinWidth — the grid preview already scales to fit via
-        // its Viewbox, so a smaller window just means a smaller preview, not clipped controls.
-        Height = Math.Min(Height, SystemParameters.WorkArea.Height);
-        Width = Math.Min(Width, SystemParameters.WorkArea.Width);
+        // Confirmed live: with no explicit positioning, WindowStartupLocation="CenterScreen"
+        // (the XAML default, left in place below as the single-monitor fallback) is not
+        // guaranteed to land on the OS-designated primary/main monitor — for a PerMonitorV2-
+        // aware app (our manifest applies process-wide, not just to CompositorWindow), its
+        // centering math resolves against whichever monitor Windows' own placement heuristic
+        // assigns the new window to at creation. Observed landing squarely on the hub's own
+        // extended display instead of the main screen. Pin explicitly to a non-hub screen
+        // when one can be unambiguously identified, the same way CompositorWindow already
+        // pins itself to the hub — never leave this to ambient defaults.
+        if (HubDisplayLocator.FindEditorWorkArea() is { } area)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Height = Math.Min(Height, area.Height);
+            Width = Math.Min(Width, area.Width);
+            Left = area.Left + (area.Width - Width) / 2;
+            Top = area.Top + (area.Height - Height) / 2;
+        }
+        else
+        {
+            // Single-screen case (the real kiosk, which only has the hub) — nothing to
+            // disambiguate, so the XAML's CenterScreen default is already correct.
+            // The XAML's 960x940 default is comfortable on a full-size monitor, but on a
+            // smaller/laptop screen it can be taller than the actual usable desktop area,
+            // pushing the bottom controls (Apply/Unassign, auto-launch checkbox) off-screen.
+            // Clamp to the work area (excludes the taskbar) before the window is ever shown,
+            // never below MinHeight/MinWidth — the grid preview already scales to fit via
+            // its Viewbox, so a smaller window just means a smaller preview, not clipped controls.
+            Height = Math.Min(Height, SystemParameters.WorkArea.Height);
+            Width = Math.Min(Width, SystemParameters.WorkArea.Width);
+        }
 
         Loaded += (_, _) =>
         {
