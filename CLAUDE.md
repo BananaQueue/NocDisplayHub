@@ -206,5 +206,16 @@ Live report: a Notepad window with 2 open tabs was drag-and-drop-captured into a
 
 Three escalating remedies were tried live and confirmed NOT to work: (1) a resize-nudge (631×531 then 632×532, the same class of fix that solved the WebView2 and browser-drag-and-drop gap issues elsewhere), (2) a hide/show cycle plus `RedrawWindow` with `RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN`, (3) a full detach/reattach (`SetParent` to `NULL` then back to the compositor, plus a resize). None revived it. **Concluded as a dead end for that specific window instance** — closing that Notepad and dragging in a fresh instance is the practical workaround. Broader guidance for the user: avoid interacting with a modern WinUI3/Islands-hosted app's own internal secondary UI (tabs, panes) once it's embedded in a cell, and never use a dragged-in native window's own minimize/close controls — both operate on assumptions (being a real top-level window) that no longer hold once it's a reparented child.
 
+## Sub-grid "split into widgets" removed entirely (2026-09-17)
+Explicit user request: "REMOVE SPLIT INTO WIDGETS FEATURE." Not needed, dropped rather than kept as dead weight. Removed everything the feature touched:
+- `NocDisplayHub.Core.Bindings.SubGrid` (deleted) and `Cell.SubRow`/`Cell.SubCol` (removed — `Cell.Label` is just `Cell(Row,Col)` again).
+- `LayoutManager`'s `_subGrids` dictionary and `SetSubGrid`/`ClearSubGrid`/`GetSubGrid`/`AllSubGrids`; `GetVisibleCells` no longer has a sub-grid-flattening branch; `ToSnapshot`/`FromSnapshot` no longer touch sub-grids at all.
+- `ProfileData.SubGrids` and `SubGridEntry` (deleted from the JSON schema). An existing `profile.json` with a `SubGrids` key left over from before this change deserializes fine — `System.Text.Json`'s default behavior silently ignores unmapped properties — and the key disappears the next time anything in the editor triggers a save.
+- `EditorWindow`: the "SPLIT INTO WIDGETS" button row, the "◀ BACK TO WALL" button, `_drilldownTop`, `RenderSubGrid`, `SelectSubCell`, `SubSplitButton_Click`, and `DescribePreset` (only ever used for a sub-grid's label). `SelectTopCell`/`SelectSubCell` collapsed back into a single `SelectCell`; `RenderPreview` no longer branches between the top grid and a drilled-in sub-grid view.
+- `CompositorWindow`'s `CellKey` record struct dropped its `SubRow`/`SubCol` fields; `SetBorderStatus`'s `Cell` reconstruction no longer copies them.
+- `SubGridTests.cs` deleted outright (all 6 tests were specific to this feature). Full suite: 27/27 pass (down from 33, exactly the 6 removed).
+
+Cells are single-binding only now — no nested/split widgets, one level or otherwise. If this is wanted again later, it existed once and can be resurrected from git history rather than redesigned from scratch.
+
 ## Testing
 The user has direct access to the real target hardware (the actual workstation, hub, and GPU) and will test there — don't assume a dev-only simulated environment is equivalent, especially for Phase 2 reliability work (reboot behavior, driver updates, signal loss) which only shows up on real hardware.

@@ -241,12 +241,6 @@
                         Style="{StaticResource PrimaryButton}"
                         Click="LaunchWall_Click"
                         Margin="0"/>
-                <Button x:Name="BackButton"
-                        DockPanel.Dock="Right"
-                        Content="◀  BACK TO WALL"
-                        Click="Back_Click"
-                        Margin="0,0,10,0"
-                        Visibility="Collapsed"/>
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="SPLIT"
                             Style="{StaticResource PanelLabel}"
@@ -289,28 +283,6 @@
                         FontWeight="SemiBold"
                         Foreground="{StaticResource AccentCyanBrush}"
                         Margin="0,0,0,12"/>
-
-                <!-- Sub-grid split controls: only meaningful for a top-level cell, not while drilled in -->
-                <StackPanel x:Name="SplitPanel"
-                        Orientation="Horizontal"
-                        Margin="0,0,0,12"
-                        IsEnabled="False">
-                    <Label Content="SPLIT INTO WIDGETS"
-                            VerticalAlignment="Center"
-                            Width="150"/>
-                    <Button Content="NONE"
-                            Click="SubSplitButton_Click"
-                            Tag="{x:Null}"/>
-                    <Button Content="1 × 2"
-                            Click="SubSplitButton_Click"
-                            Tag="OneByTwo"/>
-                    <Button Content="2 × 1"
-                            Click="SubSplitButton_Click"
-                            Tag="TwoByOne"/>
-                    <Button Content="2 × 2"
-                            Click="SubSplitButton_Click"
-                            Tag="TwoByTwo"/>
-                </StackPanel>
 
                 <StackPanel x:Name="AssignmentPanel"
                         IsEnabled="False">

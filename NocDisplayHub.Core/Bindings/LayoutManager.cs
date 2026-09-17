@@ -6,41 +6,20 @@ namespace NocDisplayHub.Core.Bindings;
 /// Owns the current preset and every cell binding, including bindings for
 /// slots not currently visible. Switching presets never discards a binding —
 /// it only changes which (row, col) slots are visible.
-///
-/// A top-level slot holds either a single binding or a SubGrid splitting it
-/// into smaller widgets — never both; assigning one clears the other.
 /// </summary>
 public sealed class LayoutManager
 {
     private readonly Dictionary<(int Row, int Col), CellBinding> _bindings = new();
-    private readonly Dictionary<(int Row, int Col), SubGrid> _subGrids = new();
 
     public Preset CurrentPreset { get; private set; } = Preset.TwoByThree;
 
     public void SetPreset(Preset preset) => CurrentPreset = preset;
 
-    public void AssignBinding(int row, int col, CellBinding binding)
-    {
-        _bindings[(row, col)] = binding;
-        _subGrids.Remove((row, col));
-    }
+    public void AssignBinding(int row, int col, CellBinding binding) => _bindings[(row, col)] = binding;
 
     public void ClearBinding(int row, int col) => _bindings.Remove((row, col));
 
     public CellBinding? GetBinding(int row, int col) => _bindings.GetValueOrDefault((row, col));
-
-    /// <summary>Splits a top-level cell into a sub-grid, discarding any single binding it held.</summary>
-    public SubGrid SetSubGrid(int row, int col, Preset subPreset)
-    {
-        var subGrid = new SubGrid { Preset = subPreset };
-        _subGrids[(row, col)] = subGrid;
-        _bindings.Remove((row, col));
-        return subGrid;
-    }
-
-    public void ClearSubGrid(int row, int col) => _subGrids.Remove((row, col));
-
-    public SubGrid? GetSubGrid(int row, int col) => _subGrids.GetValueOrDefault((row, col));
 
     public IReadOnlyList<Cell> GetVisibleCells(double windowWidth, double windowHeight)
     {
@@ -49,40 +28,15 @@ public sealed class LayoutManager
 
         foreach (var (row, col) in PresetLayout.GetVisibleSlots(CurrentPreset))
         {
-            var topBounds = bounds[(row, col)];
-            var subGrid = GetSubGrid(row, col);
-
-            if (subGrid is null)
+            var binding = GetBinding(row, col);
+            cells.Add(new Cell
             {
-                var binding = GetBinding(row, col);
-                cells.Add(new Cell
-                {
-                    Row = row,
-                    Col = col,
-                    Bounds = topBounds,
-                    Binding = binding,
-                    Status = binding is null ? CellStatus.Unbound : CellStatus.Healthy,
-                });
-                continue;
-            }
-
-            var subBounds = PresetLayout.GetBounds(subGrid.Preset, topBounds.Width, topBounds.Height);
-            foreach (var (subRow, subCol) in PresetLayout.GetVisibleSlots(subGrid.Preset))
-            {
-                var rel = subBounds[(subRow, subCol)];
-                var abs = new CellBounds(topBounds.X + rel.X, topBounds.Y + rel.Y, rel.Width, rel.Height);
-                var binding = subGrid.GetBinding(subRow, subCol);
-                cells.Add(new Cell
-                {
-                    Row = row,
-                    Col = col,
-                    SubRow = subRow,
-                    SubCol = subCol,
-                    Bounds = abs,
-                    Binding = binding,
-                    Status = binding is null ? CellStatus.Unbound : CellStatus.Healthy,
-                });
-            }
+                Row = row,
+                Col = col,
+                Bounds = bounds[(row, col)],
+                Binding = binding,
+                Status = binding is null ? CellStatus.Unbound : CellStatus.Healthy,
+            });
         }
         return cells;
     }
@@ -90,24 +44,12 @@ public sealed class LayoutManager
     /// <summary>All bindings, including ones hidden by the current preset — used for persistence.</summary>
     public IReadOnlyDictionary<(int Row, int Col), CellBinding> AllBindings => _bindings;
 
-    /// <summary>All sub-grids, including ones hidden by the current preset — used for persistence.</summary>
-    public IReadOnlyDictionary<(int Row, int Col), SubGrid> AllSubGrids => _subGrids;
-
     public ProfileData ToSnapshot()
     {
         var data = new ProfileData { Preset = CurrentPreset };
         foreach (var ((row, col), binding) in _bindings)
         {
             data.Bindings.Add(new CellBindingEntry { Row = row, Col = col, Type = binding.Type, Value = binding.Value });
-        }
-        foreach (var ((row, col), subGrid) in _subGrids)
-        {
-            var entry = new SubGridEntry { Row = row, Col = col, SubPreset = subGrid.Preset };
-            foreach (var ((subRow, subCol), binding) in subGrid.AllBindings)
-            {
-                entry.Bindings.Add(new CellBindingEntry { Row = subRow, Col = subCol, Type = binding.Type, Value = binding.Value });
-            }
-            data.SubGrids.Add(entry);
         }
         return data;
     }
@@ -119,14 +61,6 @@ public sealed class LayoutManager
         foreach (var entry in data.Bindings)
         {
             manager.AssignBinding(entry.Row, entry.Col, new CellBinding(entry.Type, entry.Value));
-        }
-        foreach (var subGridEntry in data.SubGrids)
-        {
-            var subGrid = manager.SetSubGrid(subGridEntry.Row, subGridEntry.Col, subGridEntry.SubPreset);
-            foreach (var entry in subGridEntry.Bindings)
-            {
-                subGrid.AssignBinding(entry.Row, entry.Col, new CellBinding(entry.Type, entry.Value));
-            }
         }
         return manager;
     }

@@ -32,9 +32,6 @@ namespace NocDisplayHub.Compositor;
 /// Browser cells always keep their WebView2 control as the cell's content —
 /// status is communicated purely via the border color. Native app cells have
 /// nothing to show while no process is attached, so a text placeholder is used.
-/// A cell split into a sub-grid (Task: "splitting one monitor into a grid of
-/// smaller widgets") is invisible to all of this — LayoutManager.GetVisibleCells
-/// already flattens it into plain leaf Cells before this class ever sees it.
 /// </summary>
 public partial class CompositorWindow : Window
 {
@@ -51,9 +48,9 @@ public partial class CompositorWindow : Window
     private readonly DispatcherTimer _frozenCheckTimer;
     private WindowDragWatcher? _dragWatcher;
 
-    private readonly record struct CellKey(int Row, int Col, int? SubRow, int? SubCol)
+    private readonly record struct CellKey(int Row, int Col)
     {
-        public static CellKey Of(Cell cell) => new(cell.Row, cell.Col, cell.SubRow, cell.SubCol);
+        public static CellKey Of(Cell cell) => new(cell.Row, cell.Col);
     }
 
     public CompositorWindow()
@@ -620,8 +617,6 @@ public partial class CompositorWindow : Window
         {
             Row = runtime.Cell.Row,
             Col = runtime.Cell.Col,
-            SubRow = runtime.Cell.SubRow,
-            SubCol = runtime.Cell.SubCol,
             Bounds = runtime.Cell.Bounds,
             Binding = runtime.Cell.Binding,
             Status = status,
