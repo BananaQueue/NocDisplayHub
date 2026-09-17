@@ -92,7 +92,7 @@ public static class NativeAppHost
     /// </summary>
     public static async Task<AttachResult> AttachAsync(string exePath, IntPtr parentHwnd, CellBounds bounds, TimeSpan? timeout = null)
     {
-        if (IsExplorer(exePath))
+        if (IsShellHostedTarget(exePath))
         {
             return await AttachShellWindowAsync(exePath, parentHwnd, bounds, timeout);
         }
@@ -125,17 +125,25 @@ public static class NativeAppHost
         return new AttachResult { WindowHandle = process.MainWindowHandle, Process = process };
     }
 
-    private static bool IsExplorer(string exePath) =>
-        string.Equals(Path.GetFileName(exePath), "explorer.exe", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// True for explorer.exe itself, or for a bare folder path (e.g. a shared logs
+    /// or drop folder bound directly, with no .exe at all) — ShellExecute opens a
+    /// directory path by handing it to the already-running Explorer shell exactly
+    /// the same way it does for explorer.exe, so both need the same window-tracking
+    /// path rather than the normal "wait for the launched process's own window" one.
+    /// </summary>
+    private static bool IsShellHostedTarget(string exePath) =>
+        string.Equals(Path.GetFileName(exePath), "explorer.exe", StringComparison.OrdinalIgnoreCase)
+        || Directory.Exists(exePath);
 
     /// <summary>
-    /// explorer.exe hands the request to the already-running shell (which opens a
-    /// real Explorer folder window) and exits immediately — our launched process
-    /// never owns a window. Instead of chasing that process, we watch for the new
-    /// top-level Explorer window that appears and reparent that directly. The
-    /// window belongs to the persistent shell process, which we must never kill —
-    /// AttachResult.Process is left null so callers know to track/close the window
-    /// handle itself, not a process.
+    /// explorer.exe (or a bare folder path) hands the request to the already-running
+    /// shell (which opens a real Explorer folder window) and exits immediately — our
+    /// launched process never owns a window. Instead of chasing that process, we
+    /// watch for the new top-level Explorer window that appears and reparent that
+    /// directly. The window belongs to the persistent shell process, which we must
+    /// never kill — AttachResult.Process is left null so callers know to track/close
+    /// the window handle itself, not a process.
     /// </summary>
     private static async Task<AttachResult> AttachShellWindowAsync(string exePath, IntPtr parentHwnd, CellBounds bounds, TimeSpan? timeout)
     {

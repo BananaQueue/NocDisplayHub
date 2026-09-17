@@ -44,6 +44,16 @@ public partial class EditorWindow : Window
     public EditorWindow()
     {
         InitializeComponent();
+
+        // The XAML's 960x940 default is comfortable on a full-size monitor, but on a
+        // smaller/laptop screen it can be taller than the actual usable desktop area,
+        // pushing the bottom controls (Apply/Unassign, auto-launch checkbox) off-screen.
+        // Clamp to the work area (excludes the taskbar) before the window is ever shown,
+        // never below MinHeight/MinWidth — the grid preview already scales to fit via
+        // its Viewbox, so a smaller window just means a smaller preview, not clipped controls.
+        Height = Math.Min(Height, SystemParameters.WorkArea.Height);
+        Width = Math.Min(Width, SystemParameters.WorkArea.Width);
+
         Loaded += (_, _) =>
         {
             _manager = ProfileStore.Load(AppPaths.ProfilePath);
@@ -286,11 +296,13 @@ public partial class EditorWindow : Window
         {
             ValueTextBox.IsReadOnly = true;
             ValueTextBox.Cursor = Cursors.Hand;
+            BrowseFolderButton.Visibility = Visibility.Visible;
         }
         else
         {
             ValueTextBox.IsReadOnly = false;
             ValueTextBox.Cursor = Cursors.IBeam;
+            BrowseFolderButton.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -301,12 +313,30 @@ public partial class EditorWindow : Window
         e.Handled = true; // don't let the click place a caret in a field the user can't type into
         var dialog = new OpenFileDialog
         {
-            Title = "Select an application",
-            Filter = "Applications (*.exe)|*.exe|All files (*.*)|*.*",
+            Title = "Select an application, document, or image",
+            // Not just .exe: a cell can also point at a document or image, which opens in
+            // whatever app Windows has associated with it (ShellExecute's normal "open" verb —
+            // the same mechanism already used to launch a bound .exe or folder).
+            Filter = "Applications (*.exe)|*.exe|"
+                + "Documents (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.txt|"
+                + "Images (*.jpg;*.jpeg;*.png;*.gif;*.bmp)|*.jpg;*.jpeg;*.png;*.gif;*.bmp|"
+                + "All files (*.*)|*.*",
         };
         if (dialog.ShowDialog(this) == true)
         {
             ValueTextBox.Text = dialog.FileName;
+        }
+    }
+
+    private void BrowseFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        // A bound folder path (no .exe at all) opens straight into File Explorer at that
+        // folder — NativeAppHost recognizes a directory path the same way it recognizes
+        // explorer.exe and routes it through the same shell-window tracking.
+        var dialog = new OpenFolderDialog { Title = "Select a folder to open in File Explorer" };
+        if (dialog.ShowDialog(this) == true)
+        {
+            ValueTextBox.Text = dialog.FolderName;
         }
     }
 
