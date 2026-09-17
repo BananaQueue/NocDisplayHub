@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using NocDisplayHub.Core.Bindings;
@@ -81,6 +82,12 @@ public static class NativeAppHost
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     /// <summary>
@@ -97,6 +104,12 @@ public static class NativeAppHost
             return await AttachShellWindowAsync(exePath, parentHwnd, bounds, timeout);
         }
 
+        // Snapshotted up front, before the process even starts, the same way
+        // AttachShellWindowAsync snapshots Explorer windows — so the fallback below
+        // can recognize a window as "new" even if one happened to already be open.
+        var imageName = Path.GetFileNameWithoutExtension(exePath);
+        var priorWindowsByName = new HashSet<IntPtr>(FindTopLevelWindowsByProcessName(imageName));
+
         var process = Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true })
             ?? throw new InvalidOperationException($"Failed to start process: {exePath}");
 
@@ -105,6 +118,18 @@ public static class NativeAppHost
         {
             if (process.HasExited)
             {
+                // Confirmed on Viber: not just explorer.exe hands off and exits. Modern
+                // chat/Electron-style apps often launch via a bootstrapper that spawns the
+                // real worker process (or hands off to an already-running one) and exits
+                // immediately — even on a genuinely cold start, so this isn't just the
+                // "already running" case. Rather than give up straight away, fall back to
+                // watching for a new top-level window owned by ANY process sharing this
+                // exe's image name, the same idea as AttachShellWindowAsync's Explorer
+                // window-class watch, generalized since most apps don't have Explorer's
+                // stable, publicly-documented window class to key off instead.
+                var fallback = await WaitForWindowByProcessNameAsync(imageName, priorWindowsByName, parentHwnd, bounds, deadline);
+                if (fallback is not null) return fallback;
+
                 throw new ProcessExitedWithoutWindowException($"Process exited before a main window appeared: {exePath}");
             }
             if (DateTime.UtcNow > deadline)
@@ -123,6 +148,63 @@ public static class NativeAppHost
 
         Reparent(process.MainWindowHandle, parentHwnd, bounds);
         return new AttachResult { WindowHandle = process.MainWindowHandle, Process = process };
+    }
+
+    /// <summary>
+    /// Polls for a new top-level window owned by any process named <paramref name="imageName"/>
+    /// (no extension) that wasn't in <paramref name="before"/>, until <paramref name="deadline"/>.
+    /// The owning process might not be the one we launched (e.g. a hand-off to an already-running
+    /// instance) or might be a brand new one spawned by a launcher/bootstrapper that already exited
+    /// — either way we don't own its lifecycle, so like Explorer's window, it's tracked by handle
+    /// only (<see cref="AttachResult.Process"/> left null) and must never be killed outright.
+    /// </summary>
+    private static async Task<AttachResult?> WaitForWindowByProcessNameAsync(
+        string imageName, HashSet<IntPtr> before, IntPtr parentHwnd, CellBounds bounds, DateTime deadline)
+    {
+        while (DateTime.UtcNow < deadline)
+        {
+            var newWindow = FindTopLevelWindowsByProcessName(imageName).FirstOrDefault(h => !before.Contains(h));
+            if (newWindow != IntPtr.Zero)
+            {
+                Reparent(newWindow, parentHwnd, bounds);
+                return new AttachResult { WindowHandle = newWindow, Process = null };
+            }
+            await Task.Delay(100);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Visible top-level windows with a non-empty title, owned by any currently-running process
+    /// whose name matches <paramref name="processName"/> — a non-empty title filters out
+    /// invisible utility/notification-area helper windows a launcher process might also own.
+    /// </summary>
+    private static List<IntPtr> FindTopLevelWindowsByProcessName(string processName)
+    {
+        var result = new List<IntPtr>();
+        EnumWindows((hWnd, _) =>
+        {
+            if (!IsWindowVisible(hWnd)) return true;
+
+            var titleLength = GetWindowText(hWnd, new StringBuilder(256), 256);
+            if (titleLength == 0) return true;
+
+            GetWindowThreadProcessId(hWnd, out var pid);
+            try
+            {
+                using var owner = Process.GetProcessById((int)pid);
+                if (string.Equals(owner.ProcessName, processName, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Add(hWnd);
+                }
+            }
+            catch (ArgumentException)
+            {
+                // The owning process already exited between enumeration and lookup — ignore.
+            }
+            return true;
+        }, IntPtr.Zero);
+        return result;
     }
 
     /// <summary>
