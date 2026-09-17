@@ -20,10 +20,15 @@ public sealed class CellRuntime
     public int ConsecutiveFailures { get; set; }
 
     /// <summary>
-    /// Set for singleton-shell-hosted windows (Explorer) instead of Process — we
-    /// reparented this window but don't own its process (it belongs to the
-    /// long-lived shell), so liveness is checked via NativeAppHost.IsWindowAlive
-    /// and cleanup via NativeAppHost.CloseWindow, never Process.Kill/CloseMainWindow.
+    /// The window currently reparented into this cell, if any — set for every
+    /// successfully-attached native app cell, not just shell-hosted ones (Process
+    /// may be set too, when we also own the launching process's lifecycle). The
+    /// watchdog checks this directly with NativeAppHost.IsWindowAlive rather than
+    /// trusting Process.HasExited alone: confirmed live with Outlook, a still-running
+    /// process can silently swap to a brand new window (a splash/loading frame gets
+    /// destroyed once the real one is ready), which HasExited alone would never catch.
+    /// Cleanup always goes through NativeAppHost.CloseWindow (safe for a shell-owned
+    /// window too), never Process.Kill.
     /// </summary>
     public IntPtr? TrackedWindowHandle { get; set; }
 

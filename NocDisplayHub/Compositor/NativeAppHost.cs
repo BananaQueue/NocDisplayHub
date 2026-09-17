@@ -88,7 +88,16 @@ public static class NativeAppHost
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out Rect lpRect);
+
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left, Top, Right, Bottom;
+    }
 
     /// <summary>
     /// Starts the app at <paramref name="exePath"/> and reparents its window into
@@ -146,7 +155,10 @@ public static class NativeAppHost
             process.Refresh();
         }
 
-        Reparent(process.MainWindowHandle, parentHwnd, bounds);
+        if (!Reparent(process.MainWindowHandle, parentHwnd, bounds))
+        {
+            throw new InvalidOperationException($"Failed to reparent window: {exePath}");
+        }
         return new AttachResult { WindowHandle = process.MainWindowHandle, Process = process };
     }
 
@@ -164,9 +176,8 @@ public static class NativeAppHost
         while (DateTime.UtcNow < deadline)
         {
             var newWindow = FindTopLevelWindowsByProcessName(imageName).FirstOrDefault(h => !before.Contains(h));
-            if (newWindow != IntPtr.Zero)
+            if (newWindow != IntPtr.Zero && Reparent(newWindow, parentHwnd, bounds))
             {
-                Reparent(newWindow, parentHwnd, bounds);
                 return new AttachResult { WindowHandle = newWindow, Process = null };
             }
             await Task.Delay(100);
@@ -237,9 +248,8 @@ public static class NativeAppHost
         while (DateTime.UtcNow < deadline)
         {
             var newWindow = FindTopLevelWindowsByClass(ExplorerWindowClass).FirstOrDefault(h => !before.Contains(h));
-            if (newWindow != IntPtr.Zero)
+            if (newWindow != IntPtr.Zero && Reparent(newWindow, parentHwnd, bounds))
             {
-                Reparent(newWindow, parentHwnd, bounds);
                 return new AttachResult { WindowHandle = newWindow, Process = null };
             }
             await Task.Delay(100);
@@ -268,7 +278,16 @@ public static class NativeAppHost
     /// <summary>Asks a specific window to close itself, without touching whatever process owns it — safe for shell-owned windows.</summary>
     public static void CloseWindow(IntPtr hWnd) => PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
 
-    private static void Reparent(IntPtr childHwnd, IntPtr parentHwnd, CellBounds bounds)
+    /// <summary>
+    /// Reparents a window into a compositor cell. Returns false if the OS-level
+    /// reparent itself failed — confirmed live, this was previously never checked at
+    /// all: <c>SetParent</c>'s return value was discarded outright, so a cell could
+    /// report "Healthy" while actually showing nothing. <c>SetParent</c> returning
+    /// NULL is ambiguous by itself (it also means "had no previous parent," the
+    /// normal case for a plain top-level window), so failure is only real when
+    /// <c>GetLastWin32Error</c> is nonzero too.
+    /// </summary>
+    public static bool Reparent(IntPtr childHwnd, IntPtr parentHwnd, CellBounds bounds)
     {
         // SetParent alone does not turn a top-level window into a real child window —
         // per Microsoft's own docs, it doesn't touch WS_CHILD/WS_POPUP. Without this,
@@ -280,14 +299,51 @@ public static class NativeAppHost
         style |= WS_CHILD;
         SetWindowLongPtr(childHwnd, GWL_STYLE, (IntPtr)style);
 
-        SetParent(childHwnd, parentHwnd);
+        var previousParent = SetParent(childHwnd, parentHwnd);
+        if (previousParent == IntPtr.Zero && Marshal.GetLastWin32Error() != 0)
+        {
+            return false;
+        }
+
         Reposition(childHwnd, bounds);
+        return true;
     }
 
     /// <summary>Repositions an already-reparented window, e.g. after a preset switch changes its cell's bounds.</summary>
     public static void Reposition(IntPtr childHwnd, CellBounds bounds)
     {
         SetWindowPos(childHwnd, IntPtr.Zero, (int)bounds.X, (int)bounds.Y, (int)bounds.Width, (int)bounds.Height, SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
+
+    /// <summary>
+    /// The inverse of <see cref="Reparent"/> — hands a window back to the desktop as an
+    /// ordinary independent top-level window again, restoring the caption/frame/system-menu
+    /// style bits reparenting stripped. Used when a cell's window is displaced by a
+    /// drag-and-drop capture: the window that used to be there doesn't just vanish, it
+    /// becomes a normal floating window again, exactly as if the user had never assigned
+    /// it to a cell.
+    /// </summary>
+    public static void Release(IntPtr childHwnd)
+    {
+        var style = GetWindowLongPtr(childHwnd, GWL_STYLE).ToInt64();
+        style &= ~WS_CHILD;
+        style |= WS_CAPTION | WS_THICKFRAME | WS_SYSMENU;
+        SetWindowLongPtr(childHwnd, GWL_STYLE, (IntPtr)style);
+        SetParent(childHwnd, IntPtr.Zero);
+    }
+
+    /// <summary>A window's current position and size in physical screen pixels, or null if the window no longer exists.</summary>
+    public static CellBounds? TryGetWindowRect(IntPtr hWnd)
+    {
+        if (!GetWindowRect(hWnd, out var rect)) return null;
+        return new CellBounds(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+    }
+
+    /// <summary>The process ID that owns a given window — used to exclude our own windows from drag-and-drop capture.</summary>
+    public static uint GetOwningProcessId(IntPtr hWnd)
+    {
+        GetWindowThreadProcessId(hWnd, out var pid);
+        return pid;
     }
 
     private static void TryKill(Process process)

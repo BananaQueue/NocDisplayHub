@@ -49,6 +49,7 @@ public partial class CompositorWindow : Window
     private readonly DispatcherTimer _watchdogTimer;
     private readonly DispatcherTimer _refreshTimer;
     private readonly DispatcherTimer _frozenCheckTimer;
+    private WindowDragWatcher? _dragWatcher;
 
     private readonly record struct CellKey(int Row, int Col, int? SubRow, int? SubCol)
     {
@@ -95,6 +96,83 @@ public partial class CompositorWindow : Window
         _watchdogTimer.Start();
         _refreshTimer.Start();
         _frozenCheckTimer.Start();
+
+        _dragWatcher = new WindowDragWatcher();
+        _dragWatcher.WindowDropped += OnWindowDropped;
+    }
+
+    /// <summary>
+    /// Any window dropped onto a cell's screen area gets captured into it — deliberately
+    /// no "capture mode" toggle, per explicit direction: a wrong drop is trivially fixed by
+    /// dragging the right window on top of it afterward, so the extra step isn't worth it.
+    /// </summary>
+    private void OnWindowDropped(IntPtr hwnd)
+    {
+        if (NativeAppHost.TryGetWindowRect(hwnd) is not { } windowRect) return;
+
+        var centerX = windowRect.X + (windowRect.Width / 2);
+        var centerY = windowRect.Y + (windowRect.Height / 2);
+
+        foreach (var runtime in _runtimes.Values)
+        {
+            var cellScreenX = Left + runtime.Cell.Bounds.X;
+            var cellScreenY = Top + runtime.Cell.Bounds.Y;
+            if (centerX < cellScreenX || centerX >= cellScreenX + runtime.Cell.Bounds.Width) continue;
+            if (centerY < cellScreenY || centerY >= cellScreenY + runtime.Cell.Bounds.Height) continue;
+
+            CaptureDroppedWindow(runtime, hwnd);
+            return;
+        }
+    }
+
+    private void CaptureDroppedWindow(CellRuntime runtime, IntPtr newHwnd)
+    {
+        if (runtime.TrackedWindowHandle == newHwnd) return; // already showing exactly this window
+
+        // A reparented window has no caption left to drag by, so this shouldn't normally be
+        // reachable — but if this exact window somehow is still claimed by a different cell,
+        // don't leave two cells silently pointing at the same handle.
+        foreach (var other in _runtimes.Values)
+        {
+            if (other == runtime || other.TrackedWindowHandle != newHwnd) continue;
+            other.TrackedWindowHandle = null;
+            other.Process = null;
+            other.Border.Child = new TextBlock
+            {
+                Text = "Unassigned",
+                Foreground = Brushes.Gray,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            SetBorderStatus(other, CellStatus.Unbound, Brushes.Gray);
+        }
+
+        // Whatever this cell was showing before doesn't just vanish — it becomes an ordinary
+        // floating window again, never touching its process, exactly as if it had never been
+        // assigned to a cell. This is what makes a wrong drop trivially correctable: drag the
+        // right window on top of it, and the wrong one is simply given back, not lost.
+        if (runtime.TrackedWindowHandle is { } oldHwnd)
+        {
+            NativeAppHost.Release(oldHwnd);
+        }
+        runtime.WebView?.Dispose();
+        runtime.WebView = null;
+
+        var parentHwnd = new WindowInteropHelper(this).Handle;
+        var insetBounds = InsetForBorder(runtime.Cell.Bounds);
+        if (!NativeAppHost.Reparent(newHwnd, parentHwnd, insetBounds))
+        {
+            ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, "Drag-and-drop capture failed: could not reparent the dropped window");
+            return;
+        }
+
+        runtime.TrackedWindowHandle = newHwnd;
+        runtime.Process = null; // we don't own whatever process this window actually belongs to
+        runtime.ConsecutiveFailures = 0;
+        runtime.GaveUp = false; // a manual drop always takes effect, even correcting a cell that had given up
+        runtime.Border.Child = null; // the reparented Win32 window overlays this Border directly
+        SetBorderStatus(runtime, CellStatus.Healthy, Brushes.Green);
+        ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, "Captured a window via drag-and-drop");
     }
 
     private void BuildCells(LayoutManager manager)
@@ -242,9 +320,10 @@ public partial class CompositorWindow : Window
             var insetBounds = InsetForBorder(runtime.Cell.Bounds);
             var result = await NativeAppHost.AttachAsync(runtime.Cell.Binding!.Value, parentHwnd, insetBounds);
             runtime.Process = result.Process;
-            // Explorer's window belongs to the long-lived shell process, not something we
-            // launched — track the window handle directly since we can never own/kill that process.
-            runtime.TrackedWindowHandle = result.Process is null ? result.WindowHandle : null;
+            // Always tracked by handle now, even when we also own the process — the watchdog
+            // needs to know exactly which window is showing right now, independently of whether
+            // the launching process is still alive (see CellRuntime.TrackedWindowHandle).
+            runtime.TrackedWindowHandle = result.WindowHandle;
             runtime.ConsecutiveFailures = 0;
             runtime.Border.Child = null; // the reparented Win32 window overlays this Border directly.
             SetBorderStatus(runtime, CellStatus.Healthy, Brushes.Green);
@@ -278,31 +357,64 @@ public partial class CompositorWindow : Window
 
     private void RunWatchdogPass()
     {
+        var parentHwnd = new WindowInteropHelper(this).Handle;
         foreach (var runtime in _runtimes.Values)
         {
             if (runtime.Cell.Binding?.Type != BindingType.NativeApp) continue;
             if (runtime.GaveUp) continue;
             if (runtime.AttemptInProgress) continue; // a launch is already awaiting — don't start another
 
-            if (runtime.TrackedWindowHandle is { } hwnd)
+            if (runtime.TrackedWindowHandle is { } hwnd && NativeAppHost.IsWindowAlive(hwnd))
             {
-                // Explorer's window — no process to check, only whether the window itself still exists.
-                if (NativeAppHost.IsWindowAlive(hwnd)) continue; // still open
-                ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, "Tracked window closed unexpectedly; relaunching");
-                runtime.TrackedWindowHandle = null;
-                _ = StartNativeAppCellAsync(runtime);
+                continue; // still showing the window we last reparented — genuinely fine
+            }
+
+            // The window we were showing (if any) is gone. Confirmed live with Outlook: a
+            // still-running process can legitimately swap to a brand new window — a splash/
+            // loading frame gets destroyed once the real one is ready — without ever exiting.
+            // Checking only Process.HasExited (the old behavior) missed this entirely: the cell
+            // stayed "Healthy" while showing nothing. Look for that process's *current* main
+            // window before assuming the app actually died.
+            if (runtime.Process is { HasExited: false } process)
+            {
+                process.Refresh();
+                var currentHandle = process.MainWindowHandle;
+                if (currentHandle != IntPtr.Zero && currentHandle != runtime.TrackedWindowHandle
+                    && NativeAppHost.Reparent(currentHandle, parentHwnd, InsetForBorder(runtime.Cell.Bounds)))
+                {
+                    ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label,
+                        "Reparented a new window from the same still-running process (the previous one was likely a splash/loading window)");
+                    runtime.TrackedWindowHandle = currentHandle;
+                    runtime.ConsecutiveFailures = 0;
+                    SetBorderStatus(runtime, CellStatus.Healthy, Brushes.Green);
+                    continue;
+                }
+
+                // Alive but no usable window yet (or reparenting it failed) — could just be
+                // mid-swap; give it a few more ticks rather than tearing down a live process,
+                // but not forever.
+                runtime.ConsecutiveFailures++;
+                if (runtime.ConsecutiveFailures > MaxConsecutiveFailures)
+                {
+                    LogAndGiveUp(runtime, "Process is still running but never produced a window we could show");
+                    continue;
+                }
+                SetBorderStatus(runtime, CellStatus.Restarting, Brushes.Orange);
                 continue;
             }
 
-            if (runtime.Process is { HasExited: false }) continue; // still running fine
-
-            if (runtime.Process is { HasExited: true })
+            if (runtime.TrackedWindowHandle is not null)
+            {
+                ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, "Tracked window closed unexpectedly; relaunching");
+            }
+            else if (runtime.Process is { HasExited: true })
             {
                 ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, "Native app exited unexpectedly; relaunching");
             }
-            // else: Process is null — this cell never attached in the first place (e.g. a bad
-            // path); retry it too, rather than leaving "Restarting…" up forever.
+            // else: Process and TrackedWindowHandle both null — this cell never attached in the
+            // first place (e.g. a bad path); retry it too, rather than leaving "Restarting…" up forever.
 
+            runtime.TrackedWindowHandle = null;
             runtime.Process = null;
             _ = StartNativeAppCellAsync(runtime);
         }
@@ -404,6 +516,7 @@ public partial class CompositorWindow : Window
         _watchdogTimer.Stop();
         _refreshTimer.Stop();
         _frozenCheckTimer.Stop();
+        _dragWatcher?.Dispose();
         foreach (var runtime in _runtimes.Values)
         {
             try
