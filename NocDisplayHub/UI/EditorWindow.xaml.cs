@@ -1,6 +1,8 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
@@ -26,6 +28,12 @@ namespace NocDisplayHub.UI;
 /// </summary>
 public partial class EditorWindow : Window
 {
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+
     // Mirrors the palette in EditorWindow.xaml's Window.Resources — hardcoded here rather than
     // looked up per-cell since BuildCellBorder runs on every render of every visible cell.
     private static readonly Brush ControlSurfaceBrush = new SolidColorBrush(Color.FromRgb(0x1C, 0x21, 0x26));
@@ -56,11 +64,26 @@ public partial class EditorWindow : Window
         // pins itself to the hub — never leave this to ambient defaults.
         if (HubDisplayLocator.FindEditorWorkArea() is { } area)
         {
+            // Confirmed live, the first version of this fix (plain Left/Top/Width/Height
+            // assignment) produced inconsistent, sometimes off-screen results across otherwise
+            // identical launches. Root cause: WPF's Left/Top/Width/Height are device-independent
+            // units (96 DPI), but HubDisplayLocator returns raw Win32 physical pixels. Those
+            // happen to be numerically identical on a monitor at 100% scaling — which is why
+            // CompositorWindow's near-identical assignment against the hub display (100% scaled)
+            // has always looked correct — but this machine's primary/laptop monitor runs at 125%,
+            // where mixing the two unit systems produced unpredictable results depending on
+            // WPF's internal per-monitor-DPI window-creation coercion. Sidestepped entirely by
+            // positioning the real HWND directly via SetWindowPos, in physical pixels, forcing
+            // the handle to exist first via EnsureHandle() — bypasses WPF's DIP layer completely,
+            // the same approach NativeAppHost already uses for reparented native windows.
             WindowStartupLocation = WindowStartupLocation.Manual;
-            Height = Math.Min(Height, area.Height);
-            Width = Math.Min(Width, area.Width);
-            Left = area.Left + (area.Width - Width) / 2;
-            Top = area.Top + (area.Height - Height) / 2;
+            var width = Math.Min(940, area.Width);
+            var height = Math.Min(960, area.Height);
+            var left = area.Left + (area.Width - width) / 2;
+            var top = area.Top + (area.Height - height) / 2;
+
+            var hwnd = new WindowInteropHelper(this).EnsureHandle();
+            SetWindowPos(hwnd, IntPtr.Zero, left, top, width, height, SwpNoZOrder | SwpNoActivate);
         }
         else
         {
