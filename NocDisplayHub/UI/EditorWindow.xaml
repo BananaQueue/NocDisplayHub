@@ -71,6 +71,13 @@
             <Setter Property="BorderBrush" Value="{StaticResource AccentCyanBrush}" />
         </Style>
 
+        <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource SignalRedBrush}" />
+            <Setter Property="Foreground" Value="#2E0404" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderBrush" Value="{StaticResource SignalRedBrush}" />
+        </Style>
+
         <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
         </Style>
@@ -129,7 +136,7 @@
         <!-- Control strip: split picker + launch -->
         <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,0,0,1" Padding="20,14">
             <DockPanel>
-                <Button DockPanel.Dock="Right" Content="LAUNCH WALL  ▶" Style="{StaticResource PrimaryButton}" Click="LaunchWall_Click" Margin="0" />
+                <Button x:Name="LaunchWallButton" DockPanel.Dock="Right" Content="LAUNCH WALL  ▶" Style="{StaticResource PrimaryButton}" Click="LaunchWall_Click" Margin="0" />
                 <Button x:Name="BackButton" DockPanel.Dock="Right" Content="◀  BACK TO WALL" Click="Back_Click" Margin="0,0,10,0" Visibility="Collapsed" />
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="SPLIT" Style="{StaticResource PanelLabel}" Margin="0,0,14,0" />

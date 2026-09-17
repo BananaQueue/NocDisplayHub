@@ -37,6 +37,7 @@ public partial class EditorWindow : Window
     private LayoutManager _manager = new();
     private (int Row, int Col)? _selected;
     private (int Row, int Col)? _drilldownTop;
+    private CompositorWindow? _wallWindow;
 
     public EditorWindow()
     {
@@ -340,7 +341,29 @@ public partial class EditorWindow : Window
 
     private void LaunchWall_Click(object sender, RoutedEventArgs e)
     {
+        // The wall itself has no title bar or close button (it's a borderless kiosk
+        // window), so this same button is how an operator stops it too — the editor
+        // is where interaction belongs, not overlaid on top of live cell content.
+        if (_wallWindow is not null)
+        {
+            _wallWindow.Close();
+            return;
+        }
+
         ProfileStore.Save(AppPaths.ProfilePath, _manager);
-        new CompositorWindow().Show();
+        _wallWindow = new CompositorWindow();
+        _wallWindow.Closed += (_, _) =>
+        {
+            _wallWindow = null;
+            SetLaunchButtonState(running: false);
+        };
+        _wallWindow.Show();
+        SetLaunchButtonState(running: true);
+    }
+
+    private void SetLaunchButtonState(bool running)
+    {
+        LaunchWallButton.Content = running ? "■ STOP WALL" : "LAUNCH WALL  ▶";
+        LaunchWallButton.Style = (Style)FindResource(running ? "DangerButton" : "PrimaryButton");
     }
 }

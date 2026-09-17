@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Runtime.InteropServices;
 using NocDisplayHub.Core.Config;
 
@@ -38,14 +39,16 @@ public static class HubDisplayLocator
         public uint Flags;
     }
 
+    private const uint MonitorInfoFPrimary = 0x1;
+
     /// <summary>
-    /// Returns the top-left corner (in virtual-desktop pixels) of the single
-    /// screen whose resolution matches HubSpec, or null if zero or more than
-    /// one screen matches (caller should fall back to (0,0) in that case).
+    /// Returns the top-left corner (in virtual-desktop pixels) of the screen
+    /// that's the hub, or null if it can't tell (caller should fall back to
+    /// (0,0) in that case).
     /// </summary>
     public static (int Left, int Top)? FindHubOrigin()
     {
-        var matches = new List<(int Left, int Top)>();
+        var matches = new List<(int Left, int Top, bool IsPrimary)>();
 
         EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr hMonitor, IntPtr _, ref Rect rect, IntPtr _) =>
         {
@@ -56,12 +59,24 @@ public static class HubDisplayLocator
                 var height = info.Monitor.Bottom - info.Monitor.Top;
                 if (width == HubSpec.InputWidth && height == HubSpec.InputHeight)
                 {
-                    matches.Add((info.Monitor.Left, info.Monitor.Top));
+                    matches.Add((info.Monitor.Left, info.Monitor.Top, (info.Flags & MonitorInfoFPrimary) != 0));
                 }
             }
             return true;
         }, IntPtr.Zero);
 
-        return matches.Count == 1 ? matches[0] : null;
+        if (matches.Count == 1)
+        {
+            return (matches[0].Left, matches[0].Top);
+        }
+
+        // A dev/laptop panel can legitimately share the hub's exact resolution
+        // (confirmed on hardware: a 1920x1080-at-125%-scaling laptop screen
+        // reports the same physical 1920x1080 as the hub) — that alone isn't
+        // enough to disambiguate. But nobody sets the hub-fed output as their
+        // Windows-designated primary monitor, so when there's a tie, prefer
+        // the one non-primary match over a screen that's someone's main display.
+        var nonPrimary = matches.Where(m => !m.IsPrimary).ToList();
+        return nonPrimary.Count == 1 ? (nonPrimary[0].Left, nonPrimary[0].Top) : null;
     }
 }
