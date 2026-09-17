@@ -1,8 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
+using Microsoft.Win32;
 using NocDisplayHub.Compositor;
 using NocDisplayHub.Core.Bindings;
 using NocDisplayHub.Core.Config;
@@ -267,6 +269,44 @@ public partial class EditorWindow : Window
                 SourceTypeCombo.SelectedItem = item;
                 return;
             }
+        }
+    }
+
+    private void SourceTypeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // The XAML marks "Browser URL" IsSelected="True", so this fires once during
+        // InitializeComponent itself — before ValueTextBox (declared later in the tree)
+        // has been assigned yet. Bail out rather than null-refing on startup.
+        if (ValueTextBox is null) return;
+
+        // Native app values are a filesystem path, not something worth typing by hand —
+        // clicking into the field opens a picker instead (see ValueTextBox_PreviewMouseLeftButtonDown).
+        // A browser URL stays free-typed since that's the normal way to enter one.
+        if (SourceTypeCombo.SelectedItem is ComboBoxItem { Tag: "NativeApp" })
+        {
+            ValueTextBox.IsReadOnly = true;
+            ValueTextBox.Cursor = Cursors.Hand;
+        }
+        else
+        {
+            ValueTextBox.IsReadOnly = false;
+            ValueTextBox.Cursor = Cursors.IBeam;
+        }
+    }
+
+    private void ValueTextBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (SourceTypeCombo.SelectedItem is not ComboBoxItem { Tag: "NativeApp" }) return;
+
+        e.Handled = true; // don't let the click place a caret in a field the user can't type into
+        var dialog = new OpenFileDialog
+        {
+            Title = "Select an application",
+            Filter = "Applications (*.exe)|*.exe|All files (*.*)|*.*",
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            ValueTextBox.Text = dialog.FileName;
         }
     }
 

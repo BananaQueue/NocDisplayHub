@@ -166,14 +166,14 @@
                 <StackPanel x:Name="AssignmentPanel" IsEnabled="False">
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                         <Label Content="SOURCE" VerticalAlignment="Center" Width="150" />
-                        <ComboBox x:Name="SourceTypeCombo" Width="180" VerticalAlignment="Center">
+                        <ComboBox x:Name="SourceTypeCombo" Width="180" VerticalAlignment="Center" SelectionChanged="SourceTypeCombo_SelectionChanged">
                             <ComboBoxItem Content="Browser URL" Tag="Browser" IsSelected="True" />
                             <ComboBoxItem Content="Native app" Tag="NativeApp" />
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
                         <Label Content="VALUE" VerticalAlignment="Center" Width="150" />
-                        <TextBox x:Name="ValueTextBox" Width="520" VerticalAlignment="Center" />
+                        <TextBox x:Name="ValueTextBox" Width="520" VerticalAlignment="Center" PreviewMouseLeftButtonDown="ValueTextBox_PreviewMouseLeftButtonDown" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="150,0,0,0">
                         <Button Content="APPLY TO CELL" Style="{StaticResource PrimaryButton}" Click="ApplyToCell_Click" />
