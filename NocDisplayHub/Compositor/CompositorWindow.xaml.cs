@@ -55,11 +55,28 @@ public partial class CompositorWindow : Window
         public static CellKey Of(Cell cell) => new(cell.Row, cell.Col, cell.SubRow, cell.SubCol);
     }
 
+    private TerminateOverlay? _terminateOverlay;
+
     public CompositorWindow()
     {
         InitializeComponent();
         Width = HubSpec.InputWidth;
         Height = HubSpec.InputHeight;
+
+        if (HubDisplayLocator.FindHubOrigin() is { } origin)
+        {
+            Left = origin.Left;
+            Top = origin.Top;
+        }
+        else
+        {
+            // Zero or multiple screens matched the hub's resolution — can't tell
+            // which one is the hub, so fall back to the XAML default (0,0) and
+            // leave a trail instead of silently guessing wrong.
+            ActivityLog.Write(AppPaths.ActivityLogPath,
+                "Could not auto-detect the hub display (no unique screen matched HubSpec resolution); defaulting to (0,0)");
+        }
+
         Loaded += OnLoaded;
         Closed += OnClosed;
 
@@ -80,6 +97,19 @@ public partial class CompositorWindow : Window
         _watchdogTimer.Start();
         _refreshTimer.Start();
         _frozenCheckTimer.Start();
+
+        // A separate, Topmost, always-on-top window rather than a WPF button drawn
+        // into CellCanvas: reparented native apps and WebView2 both paint via their
+        // own child HWND, which always wins the airspace battle against plain WPF
+        // content at the same screen position. A distinct top-level window is the
+        // only way to guarantee this control stays clickable over every cell type.
+        _terminateOverlay = new TerminateOverlay
+        {
+            Owner = this,
+        };
+        _terminateOverlay.Terminated += (_, _) => Close();
+        _terminateOverlay.PositionAt(Left, Top, Width);
+        _terminateOverlay.Show();
     }
 
     private void BuildCells(LayoutManager manager)
