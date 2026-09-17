@@ -288,23 +288,19 @@ public partial class CompositorWindow : Window
             }
             webView.CoreWebView2.ProcessFailed += (_, failedArgs) => OnBrowserProcessFailed(runtime, failedArgs);
 
-            // Confirmed live: page content rendered zoomed-in and cropped, like viewing a slice
-            // of a larger page — proportionally correct internally, just scaled wrong. WebView2
-            // renders page content against whatever DPI scale it detects for the monitor its host
-            // window is on, but this cell's pixel bounds are computed as true physical pixels
-            // (HubSpec, PerMonitorV2), so a page must always render at a flat 1:1 scale regardless
-            // of whatever scaling percentage Windows happens to have assigned that display. The
-            // WPF WebView2 control doesn't expose CoreWebView2Controller.RasterizationScale (the
-            // architecturally "correct" fix) at all — confirmed via the package's own API docs,
-            // it's declared internal-only (IWebView2Private) — so ZoomFactor, the one public scale
-            // lever it does expose, is used instead to cancel out whatever DPI scale WPF reports
-            // for this window on its current monitor.
-            var dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
-            if (dpiScale > 0)
-            {
-                webView.ZoomFactor = 1.0 / dpiScale;
-            }
-
+            // Tried and reverted: setting ZoomFactor = 1/DpiScaleX to compensate for a reported
+            // "zoomed in and cropped" look. Wrong fix for the wrong theory — ZoomFactor is
+            // Chromium's actual page-zoom feature, not a DPI/rasterization-scale correction: it
+            // changes how many CSS pixels fit in the viewport (same as Ctrl+/Ctrl- in a normal
+            // browser), which can reflow a responsive site's whole layout rather than just
+            // resizing it. Confirmed live this made things worse, not better. The real, simpler
+            // fact to work from: a WebView2 control — like any embedded browser — always treats
+            // its own allocated pixel area as 100% of the viewport (100vw/100vh). It has no
+            // concept of "the rest of the desktop"; it renders exactly as if it were its own
+            // standalone monitor at that resolution. If a given site's own responsive design
+            // doesn't look right at a specific cell's pixel dimensions, that's a property of that
+            // site, not something this compositor can universally correct — there is no single
+            // "fix" that makes every website look right at every possible cell size.
             NudgeWebViewLayout(webView);
         };
 
