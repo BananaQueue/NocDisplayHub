@@ -97,7 +97,14 @@ public static class NativeAppHost
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int nIndex);
 
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowPlacement(IntPtr hWnd, ref WindowPlacement lpwndpl);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPlacement(IntPtr hWnd, ref WindowPlacement lpwndpl);
+
     private const int SwMinimize = 6;
+    private const int SwShowMinimized = 2;
 
     // The primary monitor is always anchored at (0,0) by Windows convention, and these
     // give its resolution directly — simpler than enumerating monitors for this.
@@ -110,6 +117,23 @@ public static class NativeAppHost
     private struct Rect
     {
         public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point
+    {
+        public int X, Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowPlacement
+    {
+        public int Length;
+        public int Flags;
+        public int ShowCmd;
+        public Point MinPosition;
+        public Point MaxPosition;
+        public Rect NormalPosition;
     }
 
     /// <summary>
@@ -348,12 +372,16 @@ public static class NativeAppHost
     /// drag-and-drop capture: the window that used to be there doesn't just vanish, it
     /// becomes a normal floating window again, exactly as if the user had never assigned
     /// it to a cell. Minimized immediately after, so it doesn't stay sitting on top of the
-    /// wall — but confirmed live, minimizing alone wasn't enough: Windows remembers wherever
-    /// a window was positioned right before minimizing as its "restore" position, which was
-    /// still the cell's coordinates on the hub display. Un-minimizing it later (clicking it
-    /// in the taskbar, Alt+Tab, etc.) popped it right back up over the wall. Moving it onto
-    /// the primary monitor first, immediately before minimizing, fixes that: it now restores
-    /// there instead, on the operator's own screen, never back over the wall.
+    /// wall.
+    ///
+    /// Confirmed live this needed two rounds to get right. First attempt: a separate
+    /// SetWindowPos to move it onto the primary monitor, immediately followed by
+    /// ShowWindow(SW_MINIMIZE) — still restored back over the wall. Separate Win32 calls
+    /// like that aren't atomic; nothing guarantees the position change has actually been
+    /// committed to the window's tracked "restore" rect before the very next call minimizes
+    /// it, especially back-to-back with no message-loop turnaround in between. SetWindowPlacement
+    /// is the documented, atomic way to set both a window's show state *and* its remembered
+    /// restore rect in one call — used here instead, so there's no ordering gap left to race.
     /// </summary>
     public static void Release(IntPtr childHwnd)
     {
@@ -368,9 +396,12 @@ public static class NativeAppHost
         var currentSize = TryGetWindowRect(childHwnd);
         var width = (int)Math.Min(currentSize?.Width ?? 800, Math.Max(400, primaryWidth - 200));
         var height = (int)Math.Min(currentSize?.Height ?? 600, Math.Max(300, primaryHeight - 200));
-        SetWindowPos(childHwnd, IntPtr.Zero, 100, 100, width, height, SWP_NOZORDER);
 
-        ShowWindow(childHwnd, SwMinimize);
+        var placement = new WindowPlacement { Length = Marshal.SizeOf<WindowPlacement>() };
+        GetWindowPlacement(childHwnd, ref placement);
+        placement.ShowCmd = SwShowMinimized;
+        placement.NormalPosition = new Rect { Left = 100, Top = 100, Right = 100 + width, Bottom = 100 + height };
+        SetWindowPlacement(childHwnd, ref placement);
     }
 
     /// <summary>A window's current position and size in physical screen pixels, or null if the window no longer exists.</summary>

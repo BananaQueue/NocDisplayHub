@@ -137,6 +137,7 @@ public partial class CompositorWindow : Window
             if (other == runtime || other.TrackedWindowHandle != newHwnd) continue;
             other.TrackedWindowHandle = null;
             other.Process = null;
+            other.IsDragDropCaptured = false;
             other.Border.Child = new TextBlock
             {
                 Text = "Unassigned",
@@ -168,6 +169,7 @@ public partial class CompositorWindow : Window
 
         runtime.TrackedWindowHandle = newHwnd;
         runtime.Process = null; // we don't own whatever process this window actually belongs to
+        runtime.IsDragDropCaptured = true; // give it back on wall shutdown, never ask it to close
         runtime.ConsecutiveFailures = 0;
         runtime.GaveUp = false; // a manual drop always takes effect, even correcting a cell that had given up
         runtime.Border.Child = null; // the reparented Win32 window overlays this Border directly
@@ -255,7 +257,27 @@ public partial class CompositorWindow : Window
                 runtime.ConsecutiveFailures = 0;
                 runtime.LastLoadedUtc = DateTime.UtcNow;
                 SetBorderStatus(runtime, CellStatus.Healthy, Brushes.Green);
+                return;
             }
+
+            // Previously unhandled entirely: a failed navigation (e.g. no network yet on a
+            // kiosk boot, DNS not resolving, wrong host) left the border on whatever state it
+            // already had — usually the initial orange "Restarting" — forever, since nothing
+            // here ever changed it and RunWatchdogPass deliberately skips Browser cells. The
+            // only thing that would ever retry it was RunScheduledRefreshPass, up to 30 minutes
+            // later. Show it as failed immediately and retry on a short backoff instead.
+            runtime.ConsecutiveFailures++;
+            ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label,
+                $"Navigation failed ({args.WebErrorStatus}); retrying");
+
+            if (runtime.ConsecutiveFailures > MaxConsecutiveFailures)
+            {
+                LogAndGiveUp(runtime, $"Too many navigation failures in a row ({args.WebErrorStatus})");
+                return;
+            }
+
+            SetBorderStatus(runtime, CellStatus.Restarting, Brushes.Orange);
+            _ = RetryNavigationAsync(runtime, webView);
         };
         webView.CoreWebView2InitializationCompleted += (_, args) =>
         {
@@ -320,6 +342,26 @@ public partial class CompositorWindow : Window
         }), DispatcherPriority.Loaded);
     }
 
+    /// <summary>
+    /// Retries a failed browser navigation after a short backoff (2s per consecutive failure,
+    /// capped at 10s) rather than immediately — a network hiccup right at boot is likely to
+    /// need a moment, and hammering CoreWebView2.Reload() in a tight loop would just repeat
+    /// the same failure MaxConsecutiveFailures times almost instantly.
+    /// </summary>
+    private static async Task RetryNavigationAsync(CellRuntime runtime, WebView2 webView)
+    {
+        var delay = TimeSpan.FromSeconds(Math.Min(10, 2 * runtime.ConsecutiveFailures));
+        await Task.Delay(delay);
+        if (webView.CoreWebView2 is not null)
+        {
+            webView.CoreWebView2.Reload();
+        }
+        else
+        {
+            webView.Reload();
+        }
+    }
+
     private void OnBrowserProcessFailed(CellRuntime runtime, CoreWebView2ProcessFailedEventArgs args)
     {
         Dispatcher.Invoke(() =>
@@ -370,6 +412,7 @@ public partial class CompositorWindow : Window
             // needs to know exactly which window is showing right now, independently of whether
             // the launching process is still alive (see CellRuntime.TrackedWindowHandle).
             runtime.TrackedWindowHandle = result.WindowHandle;
+            runtime.IsDragDropCaptured = false; // this cell is a normal launch we own, not a borrowed window
             runtime.ConsecutiveFailures = 0;
             runtime.Border.Child = null; // the reparented Win32 window overlays this Border directly.
             SetBorderStatus(runtime, CellStatus.Healthy, Brushes.Green);
@@ -406,7 +449,12 @@ public partial class CompositorWindow : Window
         var parentHwnd = new WindowInteropHelper(this).Handle;
         foreach (var runtime in _runtimes.Values)
         {
-            if (runtime.Cell.Binding?.Type != BindingType.NativeApp) continue;
+            // A drag-and-drop-captured cell needs the same liveness checking even when its
+            // *persisted* binding isn't NativeApp (or isn't anything at all, for a cell that
+            // was Unassigned before capture) — confirmed while reviewing this: without the
+            // IsDragDropCaptured check here, a dragged-in window dying went completely
+            // undetected, since the very first line skipped the cell entirely.
+            if (runtime.Cell.Binding?.Type != BindingType.NativeApp && !runtime.IsDragDropCaptured) continue;
             if (runtime.GaveUp) continue;
             if (runtime.AttemptInProgress) continue; // a launch is already awaiting — don't start another
 
@@ -449,9 +497,12 @@ public partial class CompositorWindow : Window
                 continue;
             }
 
+            var wasDragDropCaptured = runtime.IsDragDropCaptured;
+
             if (runtime.TrackedWindowHandle is not null)
             {
-                ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, "Tracked window closed unexpectedly; relaunching");
+                ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label,
+                    wasDragDropCaptured ? "Dragged-in window closed" : "Tracked window closed unexpectedly; relaunching");
             }
             else if (runtime.Process is { HasExited: true })
             {
@@ -462,7 +513,22 @@ public partial class CompositorWindow : Window
 
             runtime.TrackedWindowHandle = null;
             runtime.Process = null;
-            _ = StartNativeAppCellAsync(runtime);
+            runtime.IsDragDropCaptured = false;
+
+            if (wasDragDropCaptured)
+            {
+                // There's no path to "relaunch" an arbitrary window someone dragged in — it
+                // isn't a path or URL we own, just whatever they happened to have open. Fall
+                // back to this cell's actual configured binding instead (which might just be
+                // Unassigned), the same dispatch BuildCells itself uses, rather than blindly
+                // calling StartNativeAppCellAsync with a binding that may not even be a native
+                // app path (or may be null entirely, which would throw).
+                StartContent(runtime);
+            }
+            else
+            {
+                _ = StartNativeAppCellAsync(runtime);
+            }
         }
     }
 
@@ -567,10 +633,27 @@ public partial class CompositorWindow : Window
         {
             try
             {
-                if (runtime.TrackedWindowHandle is { } hwnd)
+                if (runtime.TrackedWindowHandle is { } hwnd && NativeAppHost.IsWindowAlive(hwnd))
                 {
-                    // Never touch the owning process here — it's the shell. Just ask this one window to close.
-                    if (NativeAppHost.IsWindowAlive(hwnd)) NativeAppHost.CloseWindow(hwnd);
+                    if (runtime.IsDragDropCaptured)
+                    {
+                        // Confirmed live: sending WM_CLOSE to a drag-and-drop-captured window
+                        // (a window we only borrowed, never launched) took down every other
+                        // window of that same app too — closing the wall with a dragged-in
+                        // Chrome tab closed the whole browser, including tabs never touched by
+                        // the wall. Chrome-family multi-window apps decide whether to fully quit
+                        // based on how many top-level windows they still have, and reparenting
+                        // silently drops a window from that count without the app knowing, so it
+                        // can conclude its last real window just closed even when others are
+                        // still open elsewhere. Give it back instead — never ask it to close.
+                        NativeAppHost.Release(hwnd);
+                    }
+                    else
+                    {
+                        // A window we explicitly launched or that Explorer opened for this cell
+                        // — safe to ask to close, since it exists only because of this cell.
+                        NativeAppHost.CloseWindow(hwnd);
+                    }
                 }
                 else if (runtime.Process is { HasExited: false } process)
                 {

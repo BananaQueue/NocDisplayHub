@@ -36,6 +36,22 @@ public sealed class CellRuntime
     public bool GaveUp { get; set; }
 
     /// <summary>
+    /// True when <see cref="TrackedWindowHandle"/> came from a drag-and-drop capture rather
+    /// than a launch we initiated (Explorer, or any normal Source/Value binding). Confirmed
+    /// live: sending WM_CLOSE to a drag-and-drop-captured window on wall shutdown (the same
+    /// cleanup already safely used for Explorer) took down every other window of that same
+    /// app too — e.g. closing the wall with a dragged-in Chrome tab closed the whole browser,
+    /// including tabs never touched by the wall. Chrome-family multi-window apps decide
+    /// whether to fully quit based on how many top-level windows they still have, and
+    /// reparenting quietly removes a window from that count without the app knowing, so it
+    /// can conclude its last real window just closed even when others are still open
+    /// elsewhere. A window we only borrowed should be given back (NativeAppHost.Release),
+    /// never asked to close — we never owned it to begin with, unlike Explorer's window
+    /// (deliberately still closed on shutdown, since that one was actually opened for the cell).
+    /// </summary>
+    public bool IsDragDropCaptured { get; set; }
+
+    /// <summary>
     /// True while a launch attempt is awaiting (native app attach can take up to
     /// its timeout). Without this, the watchdog's 3s tick would start another
     /// overlapping attempt for the same cell before the first one finishes.

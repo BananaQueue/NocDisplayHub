@@ -39,15 +39,22 @@ public static class ActivityLog
             // meant to support, silently — the cell would never even show its red error
             // state. Retry briefly rather than let a momentary cross-process lock
             // collision take down error handling that must not fail.
-            for (var attempt = 1; ; attempt++)
+            for (var attempt = 1; attempt <= MaxAttempts; attempt++)
             {
                 try
                 {
                     File.AppendAllText(path, line);
                     return;
                 }
-                catch (IOException) when (attempt < MaxAttempts)
+                catch (IOException)
                 {
+                    // On the last attempt, give up on logging rather than let this escape —
+                    // callers write from inside cell error-handling paths (LogAndGiveUp, etc.)
+                    // specifically so a cell's own red-border/error-text update still happens
+                    // even if this one log line is lost to a stubborn cross-process file lock.
+                    // Letting it throw here would silently abort that caller mid-way, exactly
+                    // the failure mode this retry exists to avoid — just deferred, not removed.
+                    if (attempt == MaxAttempts) return;
                     Thread.Sleep(RetryDelay);
                 }
             }
