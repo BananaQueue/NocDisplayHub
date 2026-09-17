@@ -94,7 +94,15 @@ public static class NativeAppHost
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+
     private const int SwMinimize = 6;
+
+    // The primary monitor is always anchored at (0,0) by Windows convention, and these
+    // give its resolution directly — simpler than enumerating monitors for this.
+    private const int SmCxscreen = 0;
+    private const int SmCyscreen = 1;
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -339,10 +347,13 @@ public static class NativeAppHost
     /// style bits reparenting stripped. Used when a cell's window is displaced by a
     /// drag-and-drop capture: the window that used to be there doesn't just vanish, it
     /// becomes a normal floating window again, exactly as if the user had never assigned
-    /// it to a cell. Minimized immediately after, rather than left floating at the cell's
-    /// old position — otherwise it just piles up on the primary screen (the released window
-    /// still sits wherever the hub display's coordinates put it, which the workstation's own
-    /// screen doesn't have, so it would visibly crowd whichever screen it does resolve to).
+    /// it to a cell. Minimized immediately after, so it doesn't stay sitting on top of the
+    /// wall — but confirmed live, minimizing alone wasn't enough: Windows remembers wherever
+    /// a window was positioned right before minimizing as its "restore" position, which was
+    /// still the cell's coordinates on the hub display. Un-minimizing it later (clicking it
+    /// in the taskbar, Alt+Tab, etc.) popped it right back up over the wall. Moving it onto
+    /// the primary monitor first, immediately before minimizing, fixes that: it now restores
+    /// there instead, on the operator's own screen, never back over the wall.
     /// </summary>
     public static void Release(IntPtr childHwnd)
     {
@@ -351,6 +362,14 @@ public static class NativeAppHost
         style |= WS_CAPTION | WS_THICKFRAME | WS_SYSMENU;
         SetWindowLongPtr(childHwnd, GWL_STYLE, (IntPtr)style);
         SetParent(childHwnd, IntPtr.Zero);
+
+        var primaryWidth = GetSystemMetrics(SmCxscreen);
+        var primaryHeight = GetSystemMetrics(SmCyscreen);
+        var currentSize = TryGetWindowRect(childHwnd);
+        var width = (int)Math.Min(currentSize?.Width ?? 800, Math.Max(400, primaryWidth - 200));
+        var height = (int)Math.Min(currentSize?.Height ?? 600, Math.Max(300, primaryHeight - 200));
+        SetWindowPos(childHwnd, IntPtr.Zero, 100, 100, width, height, SWP_NOZORDER);
+
         ShowWindow(childHwnd, SwMinimize);
     }
 
