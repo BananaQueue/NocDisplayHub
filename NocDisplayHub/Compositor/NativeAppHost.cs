@@ -91,6 +91,11 @@ public static class NativeAppHost
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out Rect lpRect);
 
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    private const int SwMinimize = 6;
+
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -309,9 +314,22 @@ public static class NativeAppHost
         return true;
     }
 
-    /// <summary>Repositions an already-reparented window, e.g. after a preset switch changes its cell's bounds.</summary>
+    /// <summary>
+    /// Repositions an already-reparented window, e.g. after a preset switch changes its
+    /// cell's bounds. Resizes twice — first 1px smaller, then to the real target size —
+    /// rather than once: confirmed live, a browser window dragged in via drag-and-drop
+    /// capture left a black gap around its content after a single resize. Browsers (and
+    /// other apps using GPU-accelerated/DirectComposition-backed window surfaces) don't
+    /// always recompute that surface from one SetWindowPos alone, leaving stale, undersized
+    /// content. A second, genuinely different resize immediately after reliably forces a
+    /// full recompute — a known, low-risk workaround for this class of reparenting quirk,
+    /// imperceptible since both calls happen back-to-back with nothing rendered in between.
+    /// </summary>
     public static void Reposition(IntPtr childHwnd, CellBounds bounds)
     {
+        var nudgeWidth = Math.Max(1, (int)bounds.Width - 1);
+        var nudgeHeight = Math.Max(1, (int)bounds.Height - 1);
+        SetWindowPos(childHwnd, IntPtr.Zero, (int)bounds.X, (int)bounds.Y, nudgeWidth, nudgeHeight, SWP_NOZORDER | SWP_FRAMECHANGED);
         SetWindowPos(childHwnd, IntPtr.Zero, (int)bounds.X, (int)bounds.Y, (int)bounds.Width, (int)bounds.Height, SWP_NOZORDER | SWP_FRAMECHANGED);
     }
 
@@ -321,7 +339,10 @@ public static class NativeAppHost
     /// style bits reparenting stripped. Used when a cell's window is displaced by a
     /// drag-and-drop capture: the window that used to be there doesn't just vanish, it
     /// becomes a normal floating window again, exactly as if the user had never assigned
-    /// it to a cell.
+    /// it to a cell. Minimized immediately after, rather than left floating at the cell's
+    /// old position — otherwise it just piles up on the primary screen (the released window
+    /// still sits wherever the hub display's coordinates put it, which the workstation's own
+    /// screen doesn't have, so it would visibly crowd whichever screen it does resolve to).
     /// </summary>
     public static void Release(IntPtr childHwnd)
     {
@@ -330,6 +351,7 @@ public static class NativeAppHost
         style |= WS_CAPTION | WS_THICKFRAME | WS_SYSMENU;
         SetWindowLongPtr(childHwnd, GWL_STYLE, (IntPtr)style);
         SetParent(childHwnd, IntPtr.Zero);
+        ShowWindow(childHwnd, SwMinimize);
     }
 
     /// <summary>A window's current position and size in physical screen pixels, or null if the window no longer exists.</summary>
