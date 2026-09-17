@@ -288,19 +288,28 @@ public partial class CompositorWindow : Window
             }
             webView.CoreWebView2.ProcessFailed += (_, failedArgs) => OnBrowserProcessFailed(runtime, failedArgs);
 
-            // Tried and reverted: setting ZoomFactor = 1/DpiScaleX to compensate for a reported
-            // "zoomed in and cropped" look. Wrong fix for the wrong theory — ZoomFactor is
-            // Chromium's actual page-zoom feature, not a DPI/rasterization-scale correction: it
-            // changes how many CSS pixels fit in the viewport (same as Ctrl+/Ctrl- in a normal
-            // browser), which can reflow a responsive site's whole layout rather than just
-            // resizing it. Confirmed live this made things worse, not better. The real, simpler
-            // fact to work from: a WebView2 control — like any embedded browser — always treats
-            // its own allocated pixel area as 100% of the viewport (100vw/100vh). It has no
-            // concept of "the rest of the desktop"; it renders exactly as if it were its own
-            // standalone monitor at that resolution. If a given site's own responsive design
-            // doesn't look right at a specific cell's pixel dimensions, that's a property of that
-            // site, not something this compositor can universally correct — there is no single
-            // "fix" that makes every website look right at every possible cell size.
+            // Tried and reverted earlier the same day: setting ZoomFactor = 1/DpiScaleX to
+            // compensate for a reported "zoomed in and cropped" look. Wrong fix for the wrong
+            // theory — that treated ZoomFactor as a DPI/rasterization-scale correction, when it's
+            // actually Chromium's real page-zoom feature (the same thing as Ctrl+/Ctrl- in a
+            // normal browser). Confirmed live that made things worse.
+            //
+            // Used correctly here for a different, deliberate purpose: a WebView2 control, like
+            // any embedded browser, always treats its own allocated pixel area as 100% of the
+            // viewport (100vw/100vh) — it has no concept of "the rest of the desktop", so a page
+            // designed for a full monitor (fixed-width cards, desktop-oriented layout) looks
+            // cramped, or shows scrollbars, once squeezed into a small grid cell. Explicit user
+            // request: make every browser cell render as though it had a full HubSpec-width
+            // viewport, then let that rendering scale down to the cell's actual size — the exact
+            // opposite direction from the reverted fix above, and for a genuinely different
+            // reason (deliberately faking a bigger viewport, not correcting a device-scale
+            // mismatch). Unlike a WPF-level visual transform, this is safe for a reparented native
+            // HwndHost control like WebView2: the zoom is internal to Chromium, so input
+            // coordinates are still mapped correctly by WebView2 itself — a click on a visually
+            // shrunk button still lands correctly, no interactivity is actually lost.
+            // A full 1x1 cell (already HubSpec-width) computes to exactly 1.0 — no change there.
+            webView.ZoomFactor = runtime.Cell.Bounds.Width / HubSpec.InputWidth;
+
             NudgeWebViewLayout(webView);
         };
 
