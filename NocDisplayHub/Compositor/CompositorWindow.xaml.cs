@@ -265,6 +265,7 @@ public partial class CompositorWindow : Window
                 return;
             }
             webView.CoreWebView2.ProcessFailed += (_, failedArgs) => OnBrowserProcessFailed(runtime, failedArgs);
+            NudgeWebViewLayout(webView);
         };
 
         runtime.WebView = webView;
@@ -272,6 +273,33 @@ public partial class CompositorWindow : Window
         runtime.Border.Child = webView;
         _frozenTrackers[CellKey.Of(runtime.Cell)] = new FrozenContentTracker(FrozenThreshold);
         SetBorderStatus(runtime, CellStatus.Restarting, Brushes.Orange);
+    }
+
+    /// <summary>
+    /// Forces WebView2 to recompute its native Chromium composition surface against its
+    /// actual allocated space. Confirmed on real hardware: on this compositor's borderless
+    /// window, explicitly positioned on a non-primary monitor, WebView2's surface can end
+    /// up mismatched with the WPF layout size it was given, leaving a visible black gap
+    /// around the rendered page — the WPF-level equivalent of reparented native windows
+    /// not recomputing their DirectComposition surface from a single resize (see
+    /// NativeAppHost.Reposition). Same remedy, different layer: force two genuinely
+    /// different layout passes back-to-back so WebView2's HwndHost re-arranges its surface.
+    /// </summary>
+    private static void NudgeWebViewLayout(WebView2 webView)
+    {
+        webView.Dispatcher.BeginInvoke(new Action(() =>
+        {
+            var width = webView.ActualWidth;
+            var height = webView.ActualHeight;
+            if (width <= 1 || height <= 1) return; // not laid out yet — nothing to nudge
+
+            webView.Width = width - 1;
+            webView.Height = height - 1;
+            webView.UpdateLayout();
+            webView.Width = double.NaN;
+            webView.Height = double.NaN;
+            webView.UpdateLayout();
+        }), DispatcherPriority.Loaded);
     }
 
     private void OnBrowserProcessFailed(CellRuntime runtime, CoreWebView2ProcessFailedEventArgs args)
