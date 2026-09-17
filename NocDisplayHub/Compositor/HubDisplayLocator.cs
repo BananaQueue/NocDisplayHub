@@ -96,27 +96,41 @@ public static class HubDisplayLocator
     /// process-wide, not just to the compositor window) — its centering math resolves
     /// against whichever monitor Windows' own placement heuristic assigns the new window
     /// to at creation, which observably was the hub's own extended display, not the main
-    /// screen, when launched from a non-interactive context. Prefers the OS-designated
-    /// primary monitor among the non-hub matches, same assumption <see cref="FindHubOrigin"/>
-    /// already relies on (nobody sets the hub-fed output as primary). Returns null when
-    /// there's no unambiguous non-hub screen to pick (e.g. the real kiosk, which only has
-    /// the hub) — callers should fall back to their own default positioning in that case.
+    /// screen, when launched from a non-interactive context.
+    ///
+    /// Deliberately excludes whichever single screen <see cref="FindHubOrigin"/> itself
+    /// resolved the hub to, rather than independently re-filtering by resolution — caught
+    /// on review before it ever shipped: an independent resolution-only filter degenerates
+    /// exactly when the tie <see cref="FindHubOrigin"/>'s own doc comment already describes
+    /// (the laptop panel reporting the hub's exact resolution) occurs, excluding BOTH
+    /// screens as "hub-shaped" and leaving nothing, silently falling back to the very
+    /// CenterScreen bug this method exists to avoid. Reusing FindHubOrigin's own
+    /// already-tie-broken answer means editor positioning can never disagree with wherever
+    /// the compositor will actually land. Among whatever's left, prefers the OS-designated
+    /// primary monitor (nobody sets the hub-fed output as primary — same assumption
+    /// FindHubOrigin's own tiebreak relies on). Returns null when there's no unambiguous
+    /// non-hub screen to pick (e.g. the real kiosk, which only has the hub, or a single-
+    /// monitor dev setup) — callers should fall back to their own default positioning then.
     /// </summary>
     public static (int Left, int Top, int Width, int Height)? FindEditorWorkArea()
     {
-        var nonHub = EnumerateMonitors()
-            .Where(m => m.Width != HubSpec.InputWidth || m.Height != HubSpec.InputHeight)
-            .ToList();
+        var monitors = EnumerateMonitors();
+        if (monitors.Count <= 1) return null; // nothing to disambiguate against
 
-        var candidate = nonHub.Count switch
+        var hubOrigin = FindHubOrigin();
+        var candidates = hubOrigin is { } hub
+            ? monitors.Where(m => m.Left != hub.Left || m.Top != hub.Top).ToList()
+            : monitors;
+
+        var chosen = candidates.Count switch
         {
             0 => (MonitorEntry?)null,
-            1 => nonHub[0],
-            _ => nonHub.Count(m => m.IsPrimary) == 1 ? nonHub.First(m => m.IsPrimary) : null,
+            1 => candidates[0],
+            _ => candidates.Count(m => m.IsPrimary) == 1 ? candidates.First(m => m.IsPrimary) : null,
         };
 
-        if (candidate is not { } chosen) return null;
-        return (chosen.WorkArea.Left, chosen.WorkArea.Top,
-            chosen.WorkArea.Right - chosen.WorkArea.Left, chosen.WorkArea.Bottom - chosen.WorkArea.Top);
+        if (chosen is not { } area) return null;
+        return (area.WorkArea.Left, area.WorkArea.Top,
+            area.WorkArea.Right - area.WorkArea.Left, area.WorkArea.Bottom - area.WorkArea.Top);
     }
 }
