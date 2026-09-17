@@ -265,6 +265,24 @@ public partial class CompositorWindow : Window
                 return;
             }
             webView.CoreWebView2.ProcessFailed += (_, failedArgs) => OnBrowserProcessFailed(runtime, failedArgs);
+
+            // Confirmed live: page content rendered zoomed-in and cropped, like viewing a slice
+            // of a larger page — proportionally correct internally, just scaled wrong. WebView2
+            // renders page content against whatever DPI scale it detects for the monitor its host
+            // window is on, but this cell's pixel bounds are computed as true physical pixels
+            // (HubSpec, PerMonitorV2), so a page must always render at a flat 1:1 scale regardless
+            // of whatever scaling percentage Windows happens to have assigned that display. The
+            // WPF WebView2 control doesn't expose CoreWebView2Controller.RasterizationScale (the
+            // architecturally "correct" fix) at all — confirmed via the package's own API docs,
+            // it's declared internal-only (IWebView2Private) — so ZoomFactor, the one public scale
+            // lever it does expose, is used instead to cancel out whatever DPI scale WPF reports
+            // for this window on its current monitor.
+            var dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+            if (dpiScale > 0)
+            {
+                webView.ZoomFactor = 1.0 / dpiScale;
+            }
+
             NudgeWebViewLayout(webView);
         };
 
