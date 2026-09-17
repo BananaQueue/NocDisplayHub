@@ -5,77 +5,188 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="NOC Display Hub — Editor"
-        Height="820" Width="900"
-        Background="#FF1E1E1E">
+        Height="960" Width="940"
+        MinHeight="640" MinWidth="760"
+        Background="#0B0E11">
     <Window.Resources>
-        <Style TargetType="Button">
-            <Setter Property="Margin" Value="4" />
-            <Setter Property="Padding" Value="10,6" />
-            <Setter Property="Background" Value="#FF2D2D30" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="BorderBrush" Value="#FF3F3F46" />
+        <!-- Unlit equipment-rack palette: this app configures a physical hardware video
+             wall, so the editor borrows from AV-switcher control panels rather than a
+             generic app dark theme. -->
+        <SolidColorBrush x:Key="VoidBrush" Color="#0B0E11" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#14181D" />
+        <SolidColorBrush x:Key="ControlSurfaceBrush" Color="#1C2126" />
+        <SolidColorBrush x:Key="ControlSurfaceHoverBrush" Color="#242B31" />
+        <SolidColorBrush x:Key="HairlineBrush" Color="#262D33" />
+        <SolidColorBrush x:Key="TextPrimaryBrush" Color="#E8ECEF" />
+        <SolidColorBrush x:Key="TextMutedBrush" Color="#6B7680" />
+        <SolidColorBrush x:Key="SignalGreenBrush" Color="#3DDC84" />
+        <SolidColorBrush x:Key="SignalAmberBrush" Color="#FFB020" />
+        <SolidColorBrush x:Key="SignalRedBrush" Color="#FF4D4F" />
+        <SolidColorBrush x:Key="AccentCyanBrush" Color="#4FC3F7" />
+
+        <!-- Nameplate lettering for headers/labels; falls back gracefully if Bahnschrift is absent. -->
+        <FontFamily x:Key="NameplateFont">Bahnschrift SemiBold, Segoe UI Semibold, Segoe UI</FontFamily>
+        <FontFamily x:Key="DataFont">Cascadia Mono, Consolas, Courier New</FontFamily>
+
+        <Style x:Key="PanelLabel" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource NameplateFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="Background" Value="{StaticResource ControlSurfaceBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource HairlineBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontFamily" Value="{StaticResource NameplateFont}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource ControlSurfaceHoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bg" Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource AccentCyanBrush}" />
+            <Setter Property="Foreground" Value="#04252E" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentCyanBrush}" />
+        </Style>
+
         <Style TargetType="TextBlock">
-            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
         </Style>
         <Style TargetType="Label">
-            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+            <Setter Property="FontFamily" Value="{StaticResource NameplateFont}" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{StaticResource ControlSurfaceBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource HairlineBrush}" />
+            <Setter Property="FontFamily" Value="{StaticResource DataFont}" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="CaretBrush" Value="{StaticResource AccentCyanBrush}" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.4" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="{StaticResource ControlSurfaceBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="Padding" Value="8,6" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.4" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+            <Setter Property="FontFamily" Value="{StaticResource NameplateFont}" />
+            <Setter Property="FontSize" Value="11" />
         </Style>
     </Window.Resources>
-    <DockPanel Margin="12">
 
-        <!-- Split picker -->
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal">
-            <TextBlock Text="Split:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="Bold" />
-            <Button x:Name="OneByOneButton" Content="1x1" Click="PresetButton_Click" Tag="OneByOne" />
-            <Button x:Name="OneByTwoButton" Content="1x2" Click="PresetButton_Click" Tag="OneByTwo" />
-            <Button x:Name="TwoByOneButton" Content="2x1" Click="PresetButton_Click" Tag="TwoByOne" />
-            <Button x:Name="TwoByTwoButton" Content="2x2" Click="PresetButton_Click" Tag="TwoByTwo" />
-            <Button x:Name="TwoByThreeButton" Content="2x3" Click="PresetButton_Click" Tag="TwoByThree" />
-            <Button x:Name="BackButton" Content="◀ Back to wall" Click="Back_Click" Margin="24,4,4,4" Visibility="Collapsed" />
-            <Button Content="Launch Wall" Click="LaunchWall_Click" Margin="8,4,4,4" Background="#FF0E639C" />
-        </StackPanel>
+    <DockPanel>
 
-        <CheckBox x:Name="AutoStartCheckBox" DockPanel.Dock="Top" Content="Launch automatically when Windows starts"
-                  Foreground="White" Margin="0,8,0,0" Click="AutoStartCheckBox_Click" />
+        <!-- Nameplate header -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,0,0,1" Padding="20,14">
+            <DockPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse Width="8" Height="8" Fill="{StaticResource SignalGreenBrush}" Margin="0,0,12,0">
+                        <Ellipse.Effect>
+                            <DropShadowEffect Color="#3DDC84" BlurRadius="8" ShadowDepth="0" Opacity="0.9" />
+                        </Ellipse.Effect>
+                    </Ellipse>
+                    <TextBlock Text="N O C   D I S P L A Y   H U B" FontFamily="{StaticResource NameplateFont}" FontSize="16" FontWeight="SemiBold" />
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Right" Text="6-CELL VIDEO WALL CONTROLLER" Style="{StaticResource PanelLabel}" HorizontalAlignment="Right" />
+            </DockPanel>
+        </Border>
+
+        <!-- Control strip: split picker + launch -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,0,0,1" Padding="20,14">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="LAUNCH WALL  ▶" Style="{StaticResource PrimaryButton}" Click="LaunchWall_Click" Margin="0" />
+                <Button x:Name="BackButton" DockPanel.Dock="Right" Content="◀  BACK TO WALL" Click="Back_Click" Margin="0,0,10,0" Visibility="Collapsed" />
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="SPLIT" Style="{StaticResource PanelLabel}" Margin="0,0,14,0" />
+                    <Button x:Name="OneByOneButton" Content="1 × 1" Click="PresetButton_Click" Tag="OneByOne" />
+                    <Button x:Name="OneByTwoButton" Content="1 × 2" Click="PresetButton_Click" Tag="OneByTwo" />
+                    <Button x:Name="TwoByOneButton" Content="2 × 1" Click="PresetButton_Click" Tag="TwoByOne" />
+                    <Button x:Name="TwoByTwoButton" Content="2 × 2" Click="PresetButton_Click" Tag="TwoByTwo" />
+                    <Button x:Name="TwoByThreeButton" Content="2 × 3" Click="PresetButton_Click" Tag="TwoByThree" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
 
         <!-- Assignment panel -->
-        <Border DockPanel.Dock="Bottom" BorderBrush="#FF3F3F46" BorderThickness="0,1,0,0" Margin="0,12,0,0" Padding="0,12,0,0">
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" Padding="20,16">
             <StackPanel>
-                <TextBlock x:Name="SelectedCellLabel" Text="Select a cell above" FontWeight="Bold" Margin="0,0,0,8" />
+                <TextBlock x:Name="SelectedCellLabel" Text="SELECT A CELL ABOVE" FontFamily="{StaticResource NameplateFont}" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AccentCyanBrush}" Margin="0,0,0,12" />
 
                 <!-- Sub-grid split controls: only meaningful for a top-level cell, not while drilled in -->
-                <StackPanel x:Name="SplitPanel" Orientation="Horizontal" Margin="0,0,0,8" IsEnabled="False">
-                    <Label Content="Split into widgets:" VerticalAlignment="Center" />
-                    <Button Content="None" Click="SubSplitButton_Click" Tag="{x:Null}" />
-                    <Button Content="1x2" Click="SubSplitButton_Click" Tag="OneByTwo" />
-                    <Button Content="2x1" Click="SubSplitButton_Click" Tag="TwoByOne" />
-                    <Button Content="2x2" Click="SubSplitButton_Click" Tag="TwoByTwo" />
+                <StackPanel x:Name="SplitPanel" Orientation="Horizontal" Margin="0,0,0,12" IsEnabled="False">
+                    <Label Content="SPLIT INTO WIDGETS" VerticalAlignment="Center" Width="150" />
+                    <Button Content="NONE" Click="SubSplitButton_Click" Tag="{x:Null}" />
+                    <Button Content="1 × 2" Click="SubSplitButton_Click" Tag="OneByTwo" />
+                    <Button Content="2 × 1" Click="SubSplitButton_Click" Tag="TwoByOne" />
+                    <Button Content="2 × 2" Click="SubSplitButton_Click" Tag="TwoByTwo" />
                 </StackPanel>
 
                 <StackPanel x:Name="AssignmentPanel" IsEnabled="False">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                        <Label Content="Source type:" VerticalAlignment="Center" />
-                        <ComboBox x:Name="SourceTypeCombo" Width="160" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <Label Content="SOURCE" VerticalAlignment="Center" Width="150" />
+                        <ComboBox x:Name="SourceTypeCombo" Width="180" VerticalAlignment="Center">
                             <ComboBoxItem Content="Browser URL" Tag="Browser" IsSelected="True" />
                             <ComboBoxItem Content="Native app" Tag="NativeApp" />
                         </ComboBox>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                        <Label Content="Value:" VerticalAlignment="Center" Width="80" />
-                        <TextBox x:Name="ValueTextBox" Width="500" VerticalAlignment="Center" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                        <Label Content="VALUE" VerticalAlignment="Center" Width="150" />
+                        <TextBox x:Name="ValueTextBox" Width="520" VerticalAlignment="Center" />
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <Button Content="Apply to cell" Click="ApplyToCell_Click" Background="#FF0E639C" />
-                        <Button Content="Unassign" Click="Unassign_Click" />
+                    <StackPanel Orientation="Horizontal" Margin="150,0,0,0">
+                        <Button Content="APPLY TO CELL" Style="{StaticResource PrimaryButton}" Click="ApplyToCell_Click" />
+                        <Button Content="UNASSIGN" Click="Unassign_Click" />
                     </StackPanel>
                 </StackPanel>
+
+                <CheckBox x:Name="AutoStartCheckBox" Content="AUTO-LAUNCH ON WINDOWS STARTUP" Margin="150,16,0,0" Click="AutoStartCheckBox_Click" />
             </StackPanel>
         </Border>
 
-        <!-- Grid preview -->
-        <Border BorderBrush="#FF3F3F46" BorderThickness="1" Margin="0,12,0,0">
-            <Canvas x:Name="PreviewCanvas" Background="#FF101010" Width="800" Height="400" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <!-- Grid preview: a miniature of the physical wall, bezel gaps and all. The Canvas keeps
+             a fixed internal coordinate system (all the cell-bounds math stays simple), and the
+             Viewbox scales it uniformly to fill whatever space the window's current size leaves —
+             resize the editor and the wall preview grows or shrinks with it, staying centered and
+             at the correct aspect ratio, rather than sitting fixed-size in a resizable window. -->
+        <Border Background="{StaticResource VoidBrush}" Padding="20">
+            <Viewbox Stretch="Uniform">
+                <Canvas x:Name="PreviewCanvas" Width="860" Height="400" />
+            </Viewbox>
         </Border>
     </DockPanel>
 </Window>

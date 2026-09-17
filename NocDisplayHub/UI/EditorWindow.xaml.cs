@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
+using System.Windows.Shapes;
 using NocDisplayHub.Compositor;
 using NocDisplayHub.Core.Bindings;
 using NocDisplayHub.Core.Config;
@@ -22,6 +24,16 @@ namespace NocDisplayHub.UI;
 /// </summary>
 public partial class EditorWindow : Window
 {
+    // Mirrors the palette in EditorWindow.xaml's Window.Resources — hardcoded here rather than
+    // looked up per-cell since BuildCellBorder runs on every render of every visible cell.
+    private static readonly Brush ControlSurfaceBrush = new SolidColorBrush(Color.FromRgb(0x1C, 0x21, 0x26));
+    private static readonly Brush HairlineBrush = new SolidColorBrush(Color.FromRgb(0x26, 0x2D, 0x33));
+    private static readonly Brush TextPrimaryBrush = new SolidColorBrush(Color.FromRgb(0xE8, 0xEC, 0xEF));
+    private static readonly Brush TextMutedBrush = new SolidColorBrush(Color.FromRgb(0x6B, 0x76, 0x80));
+    private static readonly Brush SignalGreenBrush = new SolidColorBrush(Color.FromRgb(0x3D, 0xDC, 0x84));
+    private static readonly Brush AccentCyanBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0xC3, 0xF7));
+    private const double BezelGap = 6; // dark gap between adjacent cells, echoing the physical monitor bezels this grid represents
+
     private LayoutManager _manager = new();
     private (int Row, int Col)? _selected;
     private (int Row, int Col)? _drilldownTop;
@@ -99,13 +111,13 @@ public partial class EditorWindow : Window
             var label = subGrid is not null ? $"[Split {DescribePreset(subGrid.Preset)}]" : binding?.Value ?? "Unassigned";
             var isSelected = _drilldownTop is null && _selected == (row, col);
 
-            var border = BuildCellBorder(b, label, binding is not null || subGrid is not null, isSelected);
+            var border = BuildCellBorder(b, label, binding is not null || subGrid is not null, isSelected, row, col);
             var r = row;
             var c = col;
             border.MouseLeftButtonUp += (_, _) => SelectTopCell(r, c);
 
-            Canvas.SetLeft(border, b.X);
-            Canvas.SetTop(border, b.Y);
+            Canvas.SetLeft(border, b.X + BezelGap / 2);
+            Canvas.SetTop(border, b.Y + BezelGap / 2);
             PreviewCanvas.Children.Add(border);
         }
     }
@@ -128,36 +140,75 @@ public partial class EditorWindow : Window
             var binding = subGrid.GetBinding(subRow, subCol);
             var isSelected = _selected == (subRow, subCol);
 
-            var border = BuildCellBorder(b, binding?.Value ?? "Unassigned", binding is not null, isSelected);
+            var border = BuildCellBorder(b, binding?.Value ?? "Unassigned", binding is not null, isSelected, subRow, subCol);
             var sr = subRow;
             var sc = subCol;
             border.MouseLeftButtonUp += (_, _) => SelectSubCell(sr, sc);
 
-            Canvas.SetLeft(border, b.X);
-            Canvas.SetTop(border, b.Y);
+            Canvas.SetLeft(border, b.X + BezelGap / 2);
+            Canvas.SetTop(border, b.Y + BezelGap / 2);
             PreviewCanvas.Children.Add(border);
         }
     }
 
-    private static Border BuildCellBorder(CellBounds b, string label, bool isBound, bool isSelected) => new()
+    /// <summary>
+    /// One cell of the preview, styled as a physical monitor in the array: a status LED
+    /// (bound = lit green, unassigned = dark) stands in for "is this screen doing something",
+    /// and a rack-style coordinate tag anchors it to a specific physical position — the preview
+    /// is a miniature of the real wall, not just an abstract grid of buttons.
+    /// </summary>
+    private static Border BuildCellBorder(CellBounds b, string label, bool isBound, bool isSelected, int row, int col)
     {
-        Width = b.Width,
-        Height = b.Height,
-        BorderBrush = isSelected ? Brushes.DodgerBlue : Brushes.DimGray,
-        BorderThickness = new Thickness(isSelected ? 3 : 1),
-        Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
-        Cursor = System.Windows.Input.Cursors.Hand,
-        Child = new TextBlock
+        var content = new Grid();
+
+        content.Children.Add(new TextBlock
         {
             Text = label,
-            Foreground = isBound ? Brushes.White : Brushes.Gray,
+            Foreground = isBound ? TextPrimaryBrush : TextMutedBrush,
             TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(4),
-        },
-    };
+            Margin = new Thickness(14),
+        });
+
+        content.Children.Add(new TextBlock
+        {
+            Text = $"{row},{col}",
+            FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New"),
+            FontSize = 10,
+            Foreground = TextMutedBrush,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(8),
+        });
+
+        var led = new Ellipse
+        {
+            Width = 7,
+            Height = 7,
+            Fill = isBound ? SignalGreenBrush : HairlineBrush,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 9, 9, 0),
+        };
+        if (isBound)
+        {
+            led.Effect = new DropShadowEffect { Color = Color.FromRgb(0x3D, 0xDC, 0x84), BlurRadius = 6, ShadowDepth = 0, Opacity = 0.9 };
+        }
+        content.Children.Add(led);
+
+        return new Border
+        {
+            Width = b.Width - BezelGap,
+            Height = b.Height - BezelGap,
+            BorderBrush = isSelected ? AccentCyanBrush : HairlineBrush,
+            BorderThickness = new Thickness(isSelected ? 2 : 1),
+            Background = ControlSurfaceBrush,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Child = content,
+        };
+    }
 
     private static string DescribePreset(Preset preset) => preset switch
     {
