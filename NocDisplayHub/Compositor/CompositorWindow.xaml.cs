@@ -42,12 +42,22 @@ public partial class CompositorWindow : Window
     private static readonly TimeSpan FrozenCheckInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FrozenThreshold = TimeSpan.FromMinutes(5);
 
+    // Ctrl+Alt+F toggles fullscreen for whichever cell the mouse is currently over — see
+    // ToggleCellFullscreen. Picked as unlikely to collide with anything else system-wide.
+    private const int FullscreenHotkeyId = 1;
+    private const uint FullscreenHotkeyModifiers = GlobalHotkey.ModControl | GlobalHotkey.ModAlt;
+    private const uint FullscreenHotkeyVirtualKey = 0x46; // 'F'
+
     private readonly Dictionary<CellKey, CellRuntime> _runtimes = new();
     private readonly Dictionary<CellKey, FrozenContentTracker> _frozenTrackers = new();
     private readonly DispatcherTimer _watchdogTimer;
     private readonly DispatcherTimer _refreshTimer;
     private readonly DispatcherTimer _frozenCheckTimer;
     private WindowDragWatcher? _dragWatcher;
+    private GlobalHotkey? _fullscreenHotkey;
+
+    /// <summary>The cell currently blown up to fill the whole wall via the fullscreen hotkey, if any — see ToggleCellFullscreen.</summary>
+    private CellKey? _fullscreenedCell;
 
     private readonly record struct CellKey(int Row, int Col)
     {
@@ -97,6 +107,17 @@ public partial class CompositorWindow : Window
 
         _dragWatcher = new WindowDragWatcher();
         _dragWatcher.WindowDropped += OnWindowDropped;
+
+        _fullscreenHotkey = new GlobalHotkey(this, FullscreenHotkeyId, FullscreenHotkeyModifiers, FullscreenHotkeyVirtualKey);
+        if (_fullscreenHotkey.IsRegistered)
+        {
+            _fullscreenHotkey.Pressed += ToggleCellFullscreen;
+        }
+        else
+        {
+            ActivityLog.Write(AppPaths.ActivityLogPath,
+                "Could not register the cell-fullscreen hotkey (Ctrl+Alt+F) — it may already be in use by another application");
+        }
     }
 
     /// <summary>
@@ -180,6 +201,11 @@ public partial class CompositorWindow : Window
         CellCanvas.Children.Clear();
         _runtimes.Clear();
         _frozenTrackers.Clear();
+        // Every runtime this pointed at is about to be discarded (fresh objects replace them
+        // below), so any in-progress fullscreen toggle no longer refers to anything real —
+        // clear it rather than leaving a stale key that could later un-hide cells that were
+        // never actually hidden.
+        _fullscreenedCell = null;
 
         foreach (var cell in manager.GetVisibleCells(Width, Height))
         {
@@ -238,6 +264,133 @@ public partial class CompositorWindow : Window
             }
         }
         BuildCells(manager);
+    }
+
+    /// <summary>
+    /// Ctrl+Alt+F. Blows the cell currently under the mouse cursor up to fill the entire wall
+    /// (hiding every other cell), or — if a cell is already fullscreened — puts it and every
+    /// other cell back exactly where they were. There's no other "selected cell" concept on the
+    /// wall itself (cells stay fully interactive by design, so there's never been a click-to-select
+    /// gesture the way the editor's own preview has one), so the cursor's position at the moment
+    /// the hotkey fires is what stands in for "the selected cell." Deliberately runtime-only, the
+    /// same way drag-and-drop capture is — never touches profile.json, so a wall restart always
+    /// comes back showing the normal grid regardless of whatever was fullscreened at the time.
+    /// </summary>
+    private void ToggleCellFullscreen()
+    {
+        if (_fullscreenedCell is { } activeKey)
+        {
+            ExitCellFullscreen(activeKey);
+            return;
+        }
+
+        if (FindCellUnderCursor() is { } targetKey)
+        {
+            EnterCellFullscreen(targetKey);
+        }
+    }
+
+    /// <summary>
+    /// Which cell (if any) the mouse cursor is currently over, in the same hub-pixel coordinate
+    /// space Cell.Bounds already uses — mirrors the exact technique OnWindowDropped already uses
+    /// to hit-test a dropped window's position against every cell (Left/Top + Bounds, compared
+    /// directly against a physical-pixel Win32 coordinate), rather than inventing a second way to
+    /// do the same conversion.
+    /// </summary>
+    private CellKey? FindCellUnderCursor()
+    {
+        if (NativeAppHost.TryGetCursorPos() is not { } cursor) return null;
+
+        var relativeX = cursor.X - Left;
+        var relativeY = cursor.Y - Top;
+        foreach (var runtime in _runtimes.Values)
+        {
+            var bounds = runtime.Cell.Bounds;
+            if (relativeX < bounds.X || relativeX >= bounds.X + bounds.Width) continue;
+            if (relativeY < bounds.Y || relativeY >= bounds.Y + bounds.Height) continue;
+            return CellKey.Of(runtime.Cell);
+        }
+        return null;
+    }
+
+    private void EnterCellFullscreen(CellKey key)
+    {
+        if (!_runtimes.TryGetValue(key, out var target)) return;
+
+        _fullscreenedCell = key;
+        foreach (var (otherKey, runtime) in _runtimes)
+        {
+            if (otherKey == key) continue;
+            SetCellHidden(runtime, hidden: true);
+        }
+
+        ApplyCellBounds(target, new CellBounds(0, 0, HubSpec.InputWidth, HubSpec.InputHeight));
+        ActivityLog.Write(AppPaths.ActivityLogPath, target.Cell.Label, "Entered fullscreen (Ctrl+Alt+F)");
+    }
+
+    private void ExitCellFullscreen(CellKey key)
+    {
+        if (!_runtimes.TryGetValue(key, out var target)) return;
+
+        // Restore to the cell's own persisted Bounds, never touched by the fullscreen toggle
+        // itself — only the on-screen Border/native-window position was moved, not the Cell
+        // model, so this is always exactly where it was before entering fullscreen.
+        ApplyCellBounds(target, target.Cell.Bounds);
+
+        foreach (var (otherKey, runtime) in _runtimes)
+        {
+            if (otherKey == key) continue;
+            SetCellHidden(runtime, hidden: false);
+        }
+
+        _fullscreenedCell = null;
+        ActivityLog.Write(AppPaths.ActivityLogPath, target.Cell.Label, "Exited fullscreen (Ctrl+Alt+F)");
+    }
+
+    /// <summary>
+    /// Hides or reveals a cell that ISN'T the one being fullscreened. A plain WPF Border.Visibility
+    /// flip handles browser cells and placeholder text on its own, but a reparented native window
+    /// is a separate HWND layered on top of that Border, not something WPF is actually drawing —
+    /// it needs its own explicit show/hide via NativeAppHost.SetVisible or it would just keep
+    /// rendering over the fullscreened cell regardless of what the Border underneath it is doing.
+    /// </summary>
+    private static void SetCellHidden(CellRuntime runtime, bool hidden)
+    {
+        runtime.Border.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        if (runtime.TrackedWindowHandle is { } hwnd && NativeAppHost.IsWindowAlive(hwnd))
+        {
+            NativeAppHost.SetVisible(hwnd, visible: !hidden);
+        }
+    }
+
+    /// <summary>
+    /// Moves/resizes a cell's on-screen rendering to <paramref name="displayBounds"/> without
+    /// touching the cell's own persisted Cell.Bounds — used by the fullscreen toggle to blow a
+    /// cell up to the full HubSpec area and shrink it back again, entirely at runtime. A native
+    /// window is physically repositioned via NativeAppHost.Reposition (already used for preset
+    /// switches). A browser cell gets a new Canvas position/size, a recomputed ZoomFactor (a
+    /// fullscreen cell is exactly HubSpec-sized, so this always lands on exactly 1.0 — the same as
+    /// a real 1x1 cell), and the same NudgeWebViewLayout used at initial startup, since this is a
+    /// genuine resize and can trigger the same WebView2 composition-surface staleness documented
+    /// there.
+    /// </summary>
+    private void ApplyCellBounds(CellRuntime runtime, CellBounds displayBounds)
+    {
+        Canvas.SetLeft(runtime.Border, displayBounds.X);
+        Canvas.SetTop(runtime.Border, displayBounds.Y);
+        runtime.Border.Width = displayBounds.Width;
+        runtime.Border.Height = displayBounds.Height;
+
+        if (runtime.TrackedWindowHandle is { } hwnd && NativeAppHost.IsWindowAlive(hwnd))
+        {
+            NativeAppHost.Reposition(hwnd, InsetForBorder(displayBounds));
+        }
+
+        if (runtime.WebView is { CoreWebView2: not null } webView)
+        {
+            webView.ZoomFactor = ComputeZoomFactor(displayBounds);
+            NudgeWebViewLayout(webView);
+        }
     }
 
     /// <summary>Produces a short, specific on-screen message for a cell that failed to start, instead of a generic "Dark".</summary>
@@ -348,10 +501,7 @@ public partial class CompositorWindow : Window
             // HubSpec-sized screen would be — i.e. content fills the cell completely, cropping
             // slightly on one axis instead of leaving empty space on the other. A full 1x1 cell
             // (already exactly HubSpec-sized) still computes to exactly 1.0 either way.
-            var zoomFactor = Math.Max(
-                runtime.Cell.Bounds.Width / HubSpec.InputWidth,
-                runtime.Cell.Bounds.Height / HubSpec.InputHeight);
-            webView.ZoomFactor = zoomFactor;
+            webView.ZoomFactor = ComputeZoomFactor(runtime.Cell.Bounds);
 
             NudgeWebViewLayout(webView);
         };
@@ -362,6 +512,18 @@ public partial class CompositorWindow : Window
         _frozenTrackers[CellKey.Of(runtime.Cell)] = new FrozenContentTracker(FrozenThreshold);
         SetBorderStatus(runtime, CellStatus.Restarting, Brushes.Orange);
     }
+
+    /// <summary>
+    /// The ZoomFactor that makes a browser cell's effective viewport (physical size / zoom)
+    /// match HubSpec as closely as one uniform scalar can — see the long comment in
+    /// StartBrowserCell for why this fakes a full-size viewport, and why Math.Max (rather than
+    /// width alone) is used to avoid leaving blank space on the narrower axis. Factored out here
+    /// so ApplyCellBounds (the fullscreen toggle) can recompute the same value when a cell's
+    /// on-screen size changes at runtime, instead of only ever being set once at cell startup.
+    /// </summary>
+    private static double ComputeZoomFactor(CellBounds bounds) => Math.Max(
+        bounds.Width / HubSpec.InputWidth,
+        bounds.Height / HubSpec.InputHeight);
 
     /// <summary>
     /// Forces WebView2 to recompute its native Chromium composition surface against its
@@ -675,6 +837,7 @@ public partial class CompositorWindow : Window
         _refreshTimer.Stop();
         _frozenCheckTimer.Stop();
         _dragWatcher?.Dispose();
+        _fullscreenHotkey?.Dispose();
         foreach (var runtime in _runtimes.Values)
         {
             try
@@ -784,6 +947,15 @@ public partial class CompositorWindow : Window
         runtime.GaveUp = false;
         runtime.ConsecutiveFailures = 0;
         StartContent(runtime);
+
+        // StartContent above just recreated the cell's content sized against its persisted
+        // Cell.Bounds (a small grid cell) — if this cell happens to be the one currently blown up
+        // via the fullscreen hotkey, immediately re-apply the fullscreen size on top of that,
+        // otherwise a mid-fullscreen binding edit would silently shrink back to grid size.
+        if (_fullscreenedCell == new CellKey(row, col))
+        {
+            ApplyCellBounds(runtime, new CellBounds(0, 0, HubSpec.InputWidth, HubSpec.InputHeight));
+        }
     }
 
     /// <summary>

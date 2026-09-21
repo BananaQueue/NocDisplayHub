@@ -103,8 +103,13 @@ public static class NativeAppHost
     [DllImport("user32.dll")]
     private static extern bool SetWindowPlacement(IntPtr hWnd, ref WindowPlacement lpwndpl);
 
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out Point lpPoint);
+
     private const int SwMinimize = 6;
     private const int SwShowMinimized = 2;
+    private const int SwHide = 0;
+    private const int SwShow = 5;
 
     // The primary monitor is always anchored at (0,0) by Windows convention, and these
     // give its resolution directly — simpler than enumerating monitors for this.
@@ -403,6 +408,19 @@ public static class NativeAppHost
         placement.NormalPosition = new Rect { Left = 100, Top = 100, Right = 100 + width, Bottom = 100 + height };
         SetWindowPlacement(childHwnd, ref placement);
     }
+
+    /// <summary>The mouse cursor's current position in physical screen pixels — used to tell which cell a global hotkey should act on, since there's no other "selected cell" concept on the wall itself.</summary>
+    public static (int X, int Y)? TryGetCursorPos() => GetCursorPos(out var point) ? (point.X, point.Y) : null;
+
+    /// <summary>
+    /// Shows or hides an already-reparented native window in place, without detaching it (unlike
+    /// <see cref="Release"/>, which gives the window back to the desktop entirely). Used by the
+    /// cell-fullscreen toggle: every other cell's native content needs to disappear while one cell
+    /// takes over the whole wall, then reappear exactly where it was when toggled back — a plain
+    /// WPF Border.Visibility change has no effect here since a reparented window is a separate HWND
+    /// sitting on top of the Border, not something WPF itself is rendering or clipping.
+    /// </summary>
+    public static void SetVisible(IntPtr hwnd, bool visible) => ShowWindow(hwnd, visible ? SwShow : SwHide);
 
     /// <summary>A window's current position and size in physical screen pixels, or null if the window no longer exists.</summary>
     public static CellBounds? TryGetWindowRect(IntPtr hWnd)
