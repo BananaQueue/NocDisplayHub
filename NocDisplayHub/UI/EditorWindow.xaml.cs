@@ -15,10 +15,10 @@ using NocDisplayHub.Startup;
 namespace NocDisplayHub.UI;
 
 /// <summary>
-/// First-pass layout editor: split picker, clickable grid preview, and an
+/// First-pass layout editor: profile selector, split picker, clickable grid preview, and an
 /// assignment panel for whichever cell is selected. Writes through the same
-/// LayoutManager/ProfileStore the compositor reads from, so "Launch Wall"
-/// always reflects what's on screen here.
+/// LayoutManager/ProfileManager the compositor reads from, so "Launch Wall" always reflects
+/// whatever profile is currently active here.
 /// </summary>
 public partial class EditorWindow : Window
 {
@@ -88,7 +88,8 @@ public partial class EditorWindow : Window
 
         Loaded += (_, _) =>
         {
-            _manager = ProfileStore.Load(AppPaths.ProfilePath);
+            _manager = ProfileManager.LoadActive();
+            LoadProfilesIntoSelector();
             RenderPreview();
             AutoStartCheckBox.IsChecked = StartupRegistration.IsEnabled();
         };
@@ -109,7 +110,7 @@ public partial class EditorWindow : Window
         if (HubDisplayLocator.FindEditorWorkArea() is not { } area) return;
 
         var width = Math.Min(940, area.Width);
-        var height = Math.Min(960, area.Height);
+        var height = Math.Min(1010, area.Height);
         var left = area.Left + (area.Width - width) / 2;
         var top = area.Top + (area.Height - height) / 2;
 
@@ -134,7 +135,66 @@ public partial class EditorWindow : Window
         var tag = (string)((Button)sender).Tag;
         _manager.SetPreset(Enum.Parse<Preset>(tag));
         ResetSelection();
-        ProfileStore.Save(AppPaths.ProfilePath, _manager);
+        ProfileManager.SaveActive(_manager);
+        RenderPreview();
+    }
+
+    /// <summary>Repopulates the profile dropdown from disk and selects whichever is currently active — called after anything that adds, removes, or switches profiles.</summary>
+    private void LoadProfilesIntoSelector()
+    {
+        ProfileSelectorCombo.SelectionChanged -= ProfileSelectorCombo_SelectionChanged;
+        ProfileSelectorCombo.ItemsSource = ProfileManager.ListProfiles();
+        ProfileSelectorCombo.SelectedItem = ProfileManager.GetActiveProfileName();
+        ProfileSelectorCombo.SelectionChanged += ProfileSelectorCombo_SelectionChanged;
+    }
+
+    private void ProfileSelectorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ProfileSelectorCombo.SelectedItem is not string name) return;
+
+        ProfileManager.SetActiveProfileName(name);
+        _manager = ProfileManager.LoadActive();
+        // A full profile swap can change the preset and every binding at once — unlike a single
+        // cell's URL, that's too broad a change to try to reconcile live against a running wall
+        // (see UpdateCellBinding, which is deliberately scoped to one cell at a time). Deliberately
+        // does NOT touch _wallWindow here; Stop/Launch Wall already exists for "start over with a
+        // different layout", which switching profiles effectively is.
+        ResetSelection();
+        RenderPreview();
+    }
+
+    private void SaveAsProfileButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new TextInputDialog("Save Profile As", "Profile name:", ProfileManager.GetActiveProfileName()) { Owner = this };
+        if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.InputText)) return;
+
+        ProfileManager.SaveAs(dialog.InputText, _manager);
+        LoadProfilesIntoSelector();
+    }
+
+    private void DeleteProfileButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProfileSelectorCombo.SelectedItem is not string name) return;
+
+        var confirmed = MessageBox.Show(this, $"Delete profile \"{name}\"? This cannot be undone.",
+            "Delete Profile", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        if (!confirmed) return;
+
+        if (!ProfileManager.DeleteProfile(name))
+        {
+            MessageBox.Show(this, "Can't delete the last remaining profile.", "Delete Profile",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        // If the deleted profile was the active one, fall back to whatever's left before reloading.
+        if (ProfileManager.GetActiveProfileName() == name)
+        {
+            ProfileManager.SetActiveProfileName(ProfileManager.ListProfiles()[0]);
+        }
+        _manager = ProfileManager.LoadActive();
+        ResetSelection();
+        LoadProfilesIntoSelector();
         RenderPreview();
     }
 
@@ -363,7 +423,7 @@ public partial class EditorWindow : Window
 
         _manager.AssignBinding(r, c, binding);
 
-        ProfileStore.Save(AppPaths.ProfilePath, _manager);
+        ProfileManager.SaveActive(_manager);
         // Confirmed live: without this, the only way to see a URL change take effect at all was
         // a full Stop/Launch Wall cycle — restarting the whole compositor process just to change
         // one cell, which silently logged every other authenticated browser cell out too (a
@@ -380,7 +440,7 @@ public partial class EditorWindow : Window
 
         _manager.ClearBinding(r, c);
 
-        ProfileStore.Save(AppPaths.ProfilePath, _manager);
+        ProfileManager.SaveActive(_manager);
         _wallWindow?.UpdateCellBinding(r, c, binding: null);
         UpdateLiveCellButtonsVisibility();
         ValueTextBox.Text = "";
@@ -398,7 +458,7 @@ public partial class EditorWindow : Window
             return;
         }
 
-        ProfileStore.Save(AppPaths.ProfilePath, _manager);
+        ProfileManager.SaveActive(_manager);
         _wallWindow = new CompositorWindow();
         _wallWindow.Closed += (_, _) =>
         {

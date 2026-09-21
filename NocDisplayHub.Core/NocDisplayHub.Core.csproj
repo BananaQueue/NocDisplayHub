@@ -6,4 +6,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Lets NocDisplayHub.Tests point ProfileManager's internal test-only path overrides at a
+         temp directory instead of the real LocalApplicationData, so tests never touch a real
+         user's actual saved profiles. -->
+    <InternalsVisibleTo Include="NocDisplayHub.Tests" />
+  </ItemGroup>
+
 </Project>

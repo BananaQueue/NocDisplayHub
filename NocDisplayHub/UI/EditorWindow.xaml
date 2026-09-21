@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="NOC Display Hub — Editor"
-        Height="960"
+        Height="1010"
         Width="940"
         MinHeight="640"
         MinWidth="760"
@@ -267,6 +267,31 @@
                             Tag="TwoByThree"/>
                 </StackPanel>
             </DockPanel>
+        </Border>
+
+        <!-- Profile strip: which saved profile is loaded, plus save-as/delete -->
+        <Border DockPanel.Dock="Top"
+                Background="{StaticResource PanelBrush}"
+                BorderBrush="{StaticResource HairlineBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="20,10">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="PROFILE"
+                        Style="{StaticResource PanelLabel}"
+                        Margin="0,0,14,0"/>
+                <ComboBox x:Name="ProfileSelectorCombo"
+                        Width="220"
+                        VerticalAlignment="Center"
+                        SelectionChanged="ProfileSelectorCombo_SelectionChanged"/>
+                <Button x:Name="SaveAsProfileButton"
+                        Content="SAVE AS…"
+                        Click="SaveAsProfileButton_Click"
+                        Margin="10,0,0,0"/>
+                <Button x:Name="DeleteProfileButton"
+                        Content="DELETE"
+                        Click="DeleteProfileButton_Click"
+                        Margin="8,0,0,0"/>
+            </StackPanel>
         </Border>
 
         <!-- Assignment panel -->

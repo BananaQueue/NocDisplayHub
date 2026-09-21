@@ -88,7 +88,7 @@ public partial class CompositorWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        var manager = ProfileStore.Load(AppPaths.ProfilePath);
+        var manager = ProfileManager.LoadActive();
         BuildCells(manager);
         _watchdogTimer.Start();
         _refreshTimer.Start();
