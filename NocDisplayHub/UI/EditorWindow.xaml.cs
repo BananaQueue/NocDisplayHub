@@ -110,7 +110,7 @@ public partial class EditorWindow : Window
         if (HubDisplayLocator.FindEditorWorkArea() is not { } area) return;
 
         var width = Math.Min(940, area.Width);
-        var height = Math.Min(1010, area.Height);
+        var height = Math.Min(1050, area.Height);
         var left = area.Left + (area.Width - width) / 2;
         var top = area.Top + (area.Height - height) / 2;
 

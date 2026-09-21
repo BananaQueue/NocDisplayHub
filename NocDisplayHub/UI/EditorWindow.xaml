@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="NOC Display Hub — Editor"
-        Height="1010"
+        Height="1050"
         Width="940"
         MinHeight="640"
         MinWidth="760"
@@ -328,7 +328,7 @@
                         </ComboBox>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal"
-                            Margin="0,0,0,14">
+                            Margin="0,0,0,10">
                         <Label Content="VALUE"
                                 VerticalAlignment="Center"
                                 Width="150"/>
@@ -344,18 +344,22 @@
                                 Click="BrowseFolderButton_Click"
                                 Margin="8,0,0,0"
                                 Visibility="Collapsed"/>
-                        <!-- Browser-only, and only meaningful while the wall is actually running: pulls
-                             whatever URL the live cell has ACTUALLY navigated to (via in-app links, redirects,
-                             etc.) back into this field, and reloads the live cell in place. Neither one pushes
-                             a navigation of its own — see SyncFromWallButton_Click/RefreshCellButton_Click for
-                             why that distinction matters (a site's own session/referrer logic can treat an
-                             explicit Navigate() to a typed-from-memory URL as suspicious even on the same
-                             origin, but reading back reality and reloading in place never look any different
-                             from ordinary browsing). -->
+                    </StackPanel>
+                    <!-- Own row, not crammed onto the VALUE line — confirmed live, VALUE's textbox plus
+                         both of these together no longer fit the panel's width, clipping REFRESH off the
+                         edge entirely. Browser-only, and only meaningful while the wall is actually running:
+                         SYNC pulls whatever URL the live cell has ACTUALLY navigated to (via in-app links,
+                         redirects, etc.) back into the VALUE field above; REFRESH reloads the live cell in
+                         place. Neither one pushes a navigation of its own — see
+                         SyncFromWallButton_Click/RefreshCellButton_Click for why that distinction matters (a
+                         site's own session/referrer logic can treat an explicit navigation to a typed-from-
+                         memory URL as suspicious even on the same origin, but reading back reality and
+                         reloading in place never look any different from ordinary browsing). -->
+                    <StackPanel Orientation="Horizontal"
+                            Margin="150,0,0,14">
                         <Button x:Name="SyncFromWallButton"
                                 Content="⟳ SYNC FROM WALL"
                                 Click="SyncFromWallButton_Click"
-                                Margin="8,0,0,0"
                                 Visibility="Collapsed"/>
                         <Button x:Name="RefreshCellButton"
                                 Content="↻ REFRESH"

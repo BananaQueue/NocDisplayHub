@@ -1,5 +1,6 @@
 using System.IO;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -710,12 +711,22 @@ public partial class CompositorWindow : Window
     /// underlying browser process) just to change one — for a site using session-scoped cookies
     /// or tokens, that silently logs every authenticated cell out, not just the one being edited.
     ///
-    /// If the cell already has a live WebView2 and the new binding is also Browser, navigates the
+    /// If the cell already has a live WebView2 and the new binding is also Browser, redirects the
     /// EXISTING control to the new URL in place — the same top-level browsing context, the same
-    /// profile — exactly like typing a new address into an already-open tab, so cookies AND
-    /// sessionStorage both survive. Anything else (a type change, or no live WebView2 to reuse)
-    /// falls back to a full teardown-and-restart, but still scoped to just this one cell — every
-    /// other cell's content, and its session, is completely untouched either way.
+    /// profile — so cookies AND sessionStorage both survive. Anything else (a type change, or no
+    /// live WebView2 to reuse) falls back to a full teardown-and-restart, but still scoped to just
+    /// this one cell — every other cell's content, and its session, is completely untouched either way.
+    ///
+    /// Deliberately does this via <c>ExecuteScriptAsync("window.location.href = ...")</c> rather
+    /// than <c>CoreWebView2.Navigate()</c> — confirmed live, even the in-place Navigate() could
+    /// still trip a site's own session/referrer logic. Navigate() behaves like typing straight into
+    /// the address bar: no Referer header is sent at all, which a site's own CSRF/session-fixation
+    /// checks can treat as suspicious even on the exact same origin and browsing context. Setting
+    /// window.location.href from a script running IN the current page is what the page redirecting
+    /// itself looks like — it sends a proper Referer pointing back to the page that ran it, making
+    /// this indistinguishable from an ordinary in-app link click or JS redirect. The value is passed
+    /// through JsonSerializer.Serialize to get a correctly-escaped JS string literal, not manual
+    /// string concatenation, so a URL containing a quote or backslash can't break the script.
     /// </summary>
     public void UpdateCellBinding(int row, int col, CellBinding? binding)
     {
@@ -727,7 +738,7 @@ public partial class CompositorWindow : Window
         {
             runtime.Cell = new Cell { Row = row, Col = col, Bounds = runtime.Cell.Bounds, Binding = binding, Status = runtime.Cell.Status };
             ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, $"URL updated live, in place (no restart): {binding.Value}");
-            coreWebView.Navigate(binding.Value);
+            _ = coreWebView.ExecuteScriptAsync($"window.location.href = {JsonSerializer.Serialize(binding.Value)};");
             return;
         }
 
@@ -749,13 +760,14 @@ public partial class CompositorWindow : Window
     /// <summary>
     /// Whatever URL a live browser cell has actually navigated to right now — via in-app links,
     /// redirects, JS navigation, anything — not necessarily whatever it was originally bound to.
-    /// Confirmed live: even <see cref="UpdateCellBinding"/>'s in-place Navigate() can still trip a
-    /// site's own session/referrer logic, since an explicit Navigate() to a URL typed from memory
-    /// can look like an out-of-band jump even on the same origin. Reading back the exact current
-    /// URL (including any SPA router state, query string, or token the site itself appended) and
-    /// persisting *that* — rather than retyping one by hand — never looks any different from
-    /// ordinary browsing, so it can't trigger whatever the site's own logic is reacting to. Returns
-    /// null if the cell isn't a live, currently-rendering browser cell.
+    /// Confirmed live: even <see cref="UpdateCellBinding"/>'s original in-place `Navigate()` (since
+    /// replaced with a `window.location.href` script, see that method's own comment) could still
+    /// trip a site's own session/referrer logic, since Navigate() sends no Referer header at all —
+    /// indistinguishable from a fresh address-bar jump even on the same origin. Reading back the
+    /// exact current URL (including any SPA router state, query string, or token the site itself
+    /// appended) and persisting *that* — rather than retyping one by hand — never looks any
+    /// different from ordinary browsing, so it can't trigger whatever a site's own logic reacts to.
+    /// Returns null if the cell isn't a live, currently-rendering browser cell.
     /// </summary>
     public string? GetCellCurrentUrl(int row, int col) =>
         _runtimes.TryGetValue(new CellKey(row, col), out var runtime) ? runtime.WebView?.CoreWebView2?.Source : null;
