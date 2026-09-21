@@ -301,13 +301,30 @@
                 BorderThickness="0,1,0,0"
                 Padding="20,16">
             <StackPanel>
-                <TextBlock x:Name="SelectedCellLabel"
-                        Text="SELECT A CELL ABOVE"
-                        FontFamily="{StaticResource NameplateFont}"
-                        FontSize="12"
-                        FontWeight="SemiBold"
-                        Foreground="{StaticResource AccentCyanBrush}"
-                        Margin="0,0,0,12"/>
+                <DockPanel Margin="0,0,0,12">
+                    <!-- Drag across several cells in the preview (or shift-click a second cell) to
+                         select a rectangular block, then GROUP it into one bigger bindable region.
+                         UNGROUP splits an existing merged region back into individual cells. -->
+                    <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal">
+                        <Button x:Name="GroupCellsButton"
+                                Content="GROUP SELECTED CELLS"
+                                Style="{StaticResource PrimaryButton}"
+                                Click="GroupCellsButton_Click"
+                                Visibility="Collapsed"/>
+                        <Button x:Name="UngroupCellButton"
+                                Content="UNGROUP"
+                                Click="UngroupCellButton_Click"
+                                Visibility="Collapsed"/>
+                    </StackPanel>
+                    <TextBlock x:Name="SelectedCellLabel"
+                            Text="SELECT A CELL ABOVE"
+                            FontFamily="{StaticResource NameplateFont}"
+                            FontSize="12"
+                            FontWeight="SemiBold"
+                            Foreground="{StaticResource AccentCyanBrush}"
+                            VerticalAlignment="Center"/>
+                </DockPanel>
 
                 <StackPanel x:Name="AssignmentPanel"
                         IsEnabled="False">

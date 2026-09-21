@@ -40,11 +40,22 @@ public partial class EditorWindow : Window
 
     private LayoutManager _manager = new();
     private (int Row, int Col)? _selected;
+    private (int Row, int Col)? _dragAnchor;
+
+    /// <summary>
+    /// A rectangular block of cells mid-drag (or just finished, awaiting a click on GROUP) — null
+    /// whenever nothing is being multi-selected. A single-cell result always collapses back into
+    /// an ordinary <see cref="_selected"/> via <see cref="EndCellSelection"/>, so a plain click
+    /// behaves exactly as it always has.
+    /// </summary>
+    private HashSet<(int Row, int Col)>? _pendingGroupSelection;
+
     private CompositorWindow? _wallWindow;
 
     public EditorWindow()
     {
         InitializeComponent();
+        PreviewCanvas.MouseLeftButtonUp += (_, _) => EndCellSelection();
 
         // Confirmed live: with no explicit positioning, WindowStartupLocation="CenterScreen"
         // (the XAML default, left in place below as the single-monitor fallback) is not
@@ -135,6 +146,7 @@ public partial class EditorWindow : Window
         var tag = (string)((Button)sender).Tag;
         _manager.SetPreset(Enum.Parse<Preset>(tag));
         ResetSelection();
+        UpdateGroupButtonsVisibility();
         ProfileManager.SaveActive(_manager);
         RenderPreview();
     }
@@ -157,6 +169,7 @@ public partial class EditorWindow : Window
         PushProfileToWallIfRunning();
         ResetSelection();
         UpdateLiveCellButtonsVisibility();
+        UpdateGroupButtonsVisibility();
         RenderPreview();
     }
 
@@ -204,6 +217,7 @@ public partial class EditorWindow : Window
         PushProfileToWallIfRunning();
         ResetSelection();
         UpdateLiveCellButtonsVisibility();
+        UpdateGroupButtonsVisibility();
         LoadProfilesIntoSelector();
         RenderPreview();
     }
@@ -211,6 +225,7 @@ public partial class EditorWindow : Window
     private void ResetSelection()
     {
         _selected = null;
+        _pendingGroupSelection = null;
         AssignmentPanel.IsEnabled = false;
         SelectedCellLabel.Text = "Select a cell above";
     }
@@ -219,20 +234,31 @@ public partial class EditorWindow : Window
     {
         PreviewCanvas.Children.Clear();
 
-        var bounds = PresetLayout.GetBounds(_manager.CurrentPreset, PreviewCanvas.Width, PreviewCanvas.Height);
-        foreach (var (row, col) in PresetLayout.GetVisibleSlots(_manager.CurrentPreset))
+        // Rendered from the SAME LayoutManager.GetVisibleCells CompositorWindow uses, rather than
+        // raw PresetLayout slots — a grouped region is just a bigger Cell with a wider/taller
+        // Bounds, so the preview and the real wall are always structurally consistent for free.
+        foreach (var cell in _manager.GetVisibleCells(PreviewCanvas.Width, PreviewCanvas.Height))
         {
-            var b = bounds[(row, col)];
-            var binding = _manager.GetBinding(row, col);
-            var isSelected = _selected == (row, col);
+            var isHighlighted = _selected == (cell.Row, cell.Col)
+                || _pendingGroupSelection?.Contains((cell.Row, cell.Col)) == true;
+            var group = _manager.GetGroupContaining(cell.Row, cell.Col);
 
-            var border = BuildCellBorder(b, binding?.Value ?? "Unassigned", binding is not null, isSelected, row, col);
-            var r = row;
-            var c = col;
-            border.MouseLeftButtonUp += (_, _) => SelectCell(r, c);
+            var border = BuildCellBorder(cell.Bounds, cell.Binding?.Value ?? "Unassigned", cell.Binding is not null, isHighlighted, group, cell.Row, cell.Col);
+            border.Tag = (cell.Row, cell.Col); // read back by UpdateHighlights, so a live drag can restyle in place without rebuilding the tree
+            var r = cell.Row;
+            var c = cell.Col;
+            // MouseLeftButtonDown starts a potential drag-select (or a shift-click extension of
+            // the current selection); MouseEnter (while a drag is in progress — see
+            // BeginCellSelection's Mouse.Capture) grows the pending rectangle as the cursor moves
+            // across other cells; PreviewCanvas.MouseLeftButtonUp (wired once, in the constructor)
+            // finalizes it. A plain click-with-no-movement resolves back to an ordinary single
+            // SelectCell, in EndCellSelection — this fully replaces the old direct
+            // MouseLeftButtonUp-to-SelectCell wiring, not just adds to it.
+            border.MouseLeftButtonDown += (_, _) => BeginCellSelection(r, c, Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+            border.MouseEnter += (_, _) => ContinueCellSelection(r, c);
 
-            Canvas.SetLeft(border, b.X + BezelGap / 2);
-            Canvas.SetTop(border, b.Y + BezelGap / 2);
+            Canvas.SetLeft(border, cell.Bounds.X + BezelGap / 2);
+            Canvas.SetTop(border, cell.Bounds.Y + BezelGap / 2);
             PreviewCanvas.Children.Add(border);
         }
     }
@@ -241,9 +267,11 @@ public partial class EditorWindow : Window
     /// One cell of the preview, styled as a physical monitor in the array: a status LED
     /// (bound = lit green, unassigned = dark) stands in for "is this screen doing something",
     /// and a rack-style coordinate tag anchors it to a specific physical position — the preview
-    /// is a miniature of the real wall, not just an abstract grid of buttons.
+    /// is a miniature of the real wall, not just an abstract grid of buttons. A grouped cell's
+    /// tag also shows its span (e.g. "0,0 (2×2)") so it reads as one merged region, not an
+    /// oversized ordinary cell.
     /// </summary>
-    private static Border BuildCellBorder(CellBounds b, string label, bool isBound, bool isSelected, int row, int col)
+    private static Border BuildCellBorder(CellBounds b, string label, bool isBound, bool isHighlighted, CellGroup? group, int row, int col)
     {
         var content = new Grid();
 
@@ -260,7 +288,7 @@ public partial class EditorWindow : Window
 
         content.Children.Add(new TextBlock
         {
-            Text = $"{row},{col}",
+            Text = group is { } g ? $"{row},{col} ({g.RowSpan}×{g.ColSpan})" : $"{row},{col}",
             FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New"),
             FontSize = 10,
             Foreground = TextMutedBrush,
@@ -288,12 +316,152 @@ public partial class EditorWindow : Window
         {
             Width = b.Width - BezelGap,
             Height = b.Height - BezelGap,
-            BorderBrush = isSelected ? AccentCyanBrush : HairlineBrush,
-            BorderThickness = new Thickness(isSelected ? 2 : 1),
+            BorderBrush = isHighlighted ? AccentCyanBrush : HairlineBrush,
+            BorderThickness = new Thickness(isHighlighted ? 2 : 1),
             Background = ControlSurfaceBrush,
             Cursor = System.Windows.Input.Cursors.Hand,
             Child = content,
         };
+    }
+
+    /// <summary>
+    /// Starts (or extends) a rectangular cell selection. A plain click starts fresh from the
+    /// clicked cell; Shift+click extends from whatever was already selected instead — either way
+    /// the result is just "the rectangle between an anchor and the current cell," the same
+    /// computation a real drag uses. Mouse.Capture ensures MouseEnter keeps firing on other cells
+    /// (via ContinueCellSelection) and the eventual button-up is caught even if released outside
+    /// any single cell's bounds.
+    /// </summary>
+    private void BeginCellSelection(int row, int col, bool extend)
+    {
+        var anchor = extend && _selected is { } previous ? previous : (row, col);
+        _dragAnchor = anchor;
+        _pendingGroupSelection = RectangleBetween(anchor, (row, col));
+        Mouse.Capture(PreviewCanvas, CaptureMode.SubTree);
+        UpdateHighlights();
+    }
+
+    private void ContinueCellSelection(int row, int col)
+    {
+        if (_dragAnchor is not { } anchor) return;
+        _pendingGroupSelection = RectangleBetween(anchor, (row, col));
+        UpdateHighlights();
+    }
+
+    /// <summary>
+    /// Restyles the ALREADY-EXISTING preview borders to match the current selection state, rather
+    /// than calling RenderPreview() (which clears and rebuilds the whole PreviewCanvas). Confirmed
+    /// live this distinction actually matters, not just an optimization: rebuilding the visual
+    /// tree — destroying and replacing the very Border that raised the in-progress
+    /// MouseLeftButtonDown — while the mouse button is still physically held down corrupted WPF's
+    /// internal press/capture tracking, so the eventual button-up on PreviewCanvas never fired at
+    /// all (confirmed by the cell staying visually "stuck" highlighted with the assignment panel
+    /// never updating). Used only DURING a live drag; EndCellSelection calls RenderPreview() as
+    /// usual once the gesture has actually finished and capture has been released, which is safe.
+    /// </summary>
+    private void UpdateHighlights()
+    {
+        foreach (var child in PreviewCanvas.Children)
+        {
+            if (child is not Border { Tag: (int row, int col) } border) continue;
+            var isHighlighted = _selected == (row, col) || _pendingGroupSelection?.Contains((row, col)) == true;
+            border.BorderBrush = isHighlighted ? AccentCyanBrush : HairlineBrush;
+            border.BorderThickness = new Thickness(isHighlighted ? 2 : 1);
+        }
+    }
+
+    /// <summary>
+    /// Finishes a selection gesture. A one-cell result (an ordinary click, or a shift-click onto
+    /// the already-selected cell) collapses straight back into a normal single SelectCell — this
+    /// is what keeps every existing single-cell interaction (Apply/Unassign/Sync/Refresh) working
+    /// completely unchanged. A genuine multi-cell result is left pending: the assignment panel
+    /// doesn't apply to a raw set of cells, only to an actual cell (grouped or not), so this
+    /// clears _selected via ResetSelection and waits for a click on GROUP SELECTED CELLS instead.
+    /// </summary>
+    private void EndCellSelection()
+    {
+        if (_dragAnchor is null) return;
+        Mouse.Capture(null);
+        _dragAnchor = null;
+
+        if (_pendingGroupSelection is { Count: 1 } single)
+        {
+            var (row, col) = single.First();
+            _pendingGroupSelection = null;
+            SelectCell(row, col);
+            return;
+        }
+
+        // Not ResetSelection() — that also clears _pendingGroupSelection, which is exactly what
+        // this branch needs to keep intact (a genuine multi-cell result, awaiting GROUP). Only
+        // the single-cell assignment-panel state needs clearing here.
+        _selected = null;
+        AssignmentPanel.IsEnabled = false;
+        SelectedCellLabel.Text = "Select a cell above";
+        UpdateLiveCellButtonsVisibility();
+        UpdateGroupButtonsVisibility();
+        RenderPreview();
+    }
+
+    private static HashSet<(int Row, int Col)> RectangleBetween((int Row, int Col) a, (int Row, int Col) b)
+    {
+        var result = new HashSet<(int Row, int Col)>();
+        for (var row = Math.Min(a.Row, b.Row); row <= Math.Max(a.Row, b.Row); row++)
+        {
+            for (var col = Math.Min(a.Col, b.Col); col <= Math.Max(a.Col, b.Col); col++)
+            {
+                result.Add((row, col));
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// GROUP is enabled only for a genuine (2+ cell) pending selection; UNGROUP only when the
+    /// currently-selected single cell is itself the anchor of an existing group. Re-evaluated
+    /// everywhere selection state changes, the same pattern UpdateLiveCellButtonsVisibility
+    /// already established for the Sync/Refresh buttons.
+    /// </summary>
+    private void UpdateGroupButtonsVisibility()
+    {
+        GroupCellsButton.Visibility = _pendingGroupSelection is { Count: >= 2 } ? Visibility.Visible : Visibility.Collapsed;
+        UngroupCellButton.Visibility = _selected is (int r, int c) && _manager.GetGroupContaining(r, c) is not null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void GroupCellsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pendingGroupSelection is not { Count: >= 2 } selection) return;
+
+        if (!_manager.TryGroupCells(selection, out var error))
+        {
+            MessageBox.Show(this, error, "Can't Group Cells", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        ProfileManager.SaveActive(_manager);
+        // Grouping/ungrouping changes the actual SET of visible cells (merges or splits them),
+        // the same kind of broad structural change a preset switch makes — reuses
+        // ReloadFromProfile (via PushProfileToWallIfRunning) rather than the single-cell
+        // UpdateCellBinding path, which assumes a fixed 1:1 cell topology.
+        PushProfileToWallIfRunning();
+        _pendingGroupSelection = null;
+        ResetSelection();
+        UpdateGroupButtonsVisibility();
+        RenderPreview();
+    }
+
+    private void UngroupCellButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selected is not (int r, int c)) return;
+
+        _manager.Ungroup(r, c);
+        ProfileManager.SaveActive(_manager);
+        PushProfileToWallIfRunning();
+        ResetSelection();
+        UpdateGroupButtonsVisibility();
+        RenderPreview();
     }
 
     /// <summary>
@@ -312,6 +480,7 @@ public partial class EditorWindow : Window
     private void SelectCell(int row, int col)
     {
         _selected = (row, col);
+        _pendingGroupSelection = null; // a resolved single-cell selection always supersedes any pending multi-select
         SelectedCellLabel.Text = $"Cell ({row}, {col})";
         AssignmentPanel.IsEnabled = true;
 
@@ -319,6 +488,7 @@ public partial class EditorWindow : Window
         ValueTextBox.Text = binding?.Value ?? "";
         SelectSourceType(binding?.Type ?? BindingType.Browser);
         UpdateLiveCellButtonsVisibility(); // SelectSourceType's SelectionChanged won't refire if the combo item didn't change
+        UpdateGroupButtonsVisibility();
         RenderPreview();
     }
 
