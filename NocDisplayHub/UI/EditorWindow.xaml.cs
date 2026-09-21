@@ -293,40 +293,21 @@ public partial class EditorWindow : Window
             Background = ControlSurfaceBrush,
             Cursor = System.Windows.Input.Cursors.Hand,
             Child = content,
-            Tag = (row, col), // read back by TryGetCellUnderCursor, so the fullscreen hotkey can hit-test the preview too
         };
     }
 
     /// <summary>
-    /// Hit-tests the current mouse position against this editor's own grid preview — wired into
-    /// CompositorWindow.SecondaryCellLocator (see LaunchWall_Click) so the fullscreen hotkey
-    /// (Ctrl+Alt+F) also works while hovering a cell here, not just while hovering the real cell
-    /// on the physical wall. The editor and the wall are usually on different screens entirely,
-    /// so an operator watching the preview shouldn't have to walk over to the hub display just to
-    /// fullscreen a cell.
+    /// Wired into CompositorWindow.SecondaryCellLocator (see LaunchWall_Click) so the fullscreen
+    /// hotkey (Ctrl+Alt+F) targets whichever cell is currently selected here — the one clicked in
+    /// the grid preview, highlighted with a cyan border, and shown in the assignment panel below —
+    /// rather than requiring the mouse to be precisely hovering that cell's tiny preview rectangle
+    /// at the exact moment the hotkey fires. Simpler and far more reliable than a hover-based hit
+    /// test (an earlier version of this used PreviewCanvas.PointFromScreen for exactly that, but
+    /// pixel-precise hovering proved needlessly fragile to rely on, especially across screens with
+    /// different DPI scaling) — this reuses the same _selected state Apply/Unassign/Sync/Refresh
+    /// already treat as "the cell I'm working on."
     /// </summary>
-    private (int Row, int Col)? TryGetCellUnderCursor()
-    {
-        if (!IsVisible || WindowState == WindowState.Minimized) return null;
-        if (NativeAppHost.TryGetCursorPos() is not { } cursor) return null;
-
-        // PointFromScreen walks the full visual transform chain — including the preview's
-        // Viewbox scale factor and this window's own DPI — so the physical screen pixel from
-        // TryGetCursorPos lands directly in the same local coordinate space RenderPreview already
-        // draws cells in via Canvas.SetLeft/SetTop, with no manual scale-factor math needed.
-        var localPoint = PreviewCanvas.PointFromScreen(new Point(cursor.X, cursor.Y));
-
-        foreach (var child in PreviewCanvas.Children)
-        {
-            if (child is not Border { Tag: (int row, int col) } border) continue;
-            var left = Canvas.GetLeft(border);
-            var top = Canvas.GetTop(border);
-            if (localPoint.X < left || localPoint.X >= left + border.Width) continue;
-            if (localPoint.Y < top || localPoint.Y >= top + border.Height) continue;
-            return (row, col);
-        }
-        return null;
-    }
+    private (int Row, int Col)? GetSelectedCellForFullscreen() => _selected;
 
     private void SelectCell(int row, int col)
     {
@@ -502,7 +483,7 @@ public partial class EditorWindow : Window
 
         ProfileManager.SaveActive(_manager);
         _wallWindow = new CompositorWindow();
-        _wallWindow.SecondaryCellLocator = TryGetCellUnderCursor;
+        _wallWindow.SecondaryCellLocator = GetSelectedCellForFullscreen;
         _wallWindow.Closed += (_, _) =>
         {
             _wallWindow = null;
