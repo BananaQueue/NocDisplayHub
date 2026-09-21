@@ -293,7 +293,39 @@ public partial class EditorWindow : Window
             Background = ControlSurfaceBrush,
             Cursor = System.Windows.Input.Cursors.Hand,
             Child = content,
+            Tag = (row, col), // read back by TryGetCellUnderCursor, so the fullscreen hotkey can hit-test the preview too
         };
+    }
+
+    /// <summary>
+    /// Hit-tests the current mouse position against this editor's own grid preview — wired into
+    /// CompositorWindow.SecondaryCellLocator (see LaunchWall_Click) so the fullscreen hotkey
+    /// (Ctrl+Alt+F) also works while hovering a cell here, not just while hovering the real cell
+    /// on the physical wall. The editor and the wall are usually on different screens entirely,
+    /// so an operator watching the preview shouldn't have to walk over to the hub display just to
+    /// fullscreen a cell.
+    /// </summary>
+    private (int Row, int Col)? TryGetCellUnderCursor()
+    {
+        if (!IsVisible || WindowState == WindowState.Minimized) return null;
+        if (NativeAppHost.TryGetCursorPos() is not { } cursor) return null;
+
+        // PointFromScreen walks the full visual transform chain — including the preview's
+        // Viewbox scale factor and this window's own DPI — so the physical screen pixel from
+        // TryGetCursorPos lands directly in the same local coordinate space RenderPreview already
+        // draws cells in via Canvas.SetLeft/SetTop, with no manual scale-factor math needed.
+        var localPoint = PreviewCanvas.PointFromScreen(new Point(cursor.X, cursor.Y));
+
+        foreach (var child in PreviewCanvas.Children)
+        {
+            if (child is not Border { Tag: (int row, int col) } border) continue;
+            var left = Canvas.GetLeft(border);
+            var top = Canvas.GetTop(border);
+            if (localPoint.X < left || localPoint.X >= left + border.Width) continue;
+            if (localPoint.Y < top || localPoint.Y >= top + border.Height) continue;
+            return (row, col);
+        }
+        return null;
     }
 
     private void SelectCell(int row, int col)
@@ -470,6 +502,7 @@ public partial class EditorWindow : Window
 
         ProfileManager.SaveActive(_manager);
         _wallWindow = new CompositorWindow();
+        _wallWindow.SecondaryCellLocator = TryGetCellUnderCursor;
         _wallWindow.Closed += (_, _) =>
         {
             _wallWindow = null;

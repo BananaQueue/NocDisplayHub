@@ -59,6 +59,18 @@ public partial class CompositorWindow : Window
     /// <summary>The cell currently blown up to fill the whole wall via the fullscreen hotkey, if any — see ToggleCellFullscreen.</summary>
     private CellKey? _fullscreenedCell;
 
+    /// <summary>
+    /// Optional secondary "which cell is the cursor over" check, consulted by the fullscreen
+    /// hotkey only when the cursor isn't over the wall's own display. Set by EditorWindow (when
+    /// it launched this wall) to its own grid-preview hit test, so hovering a cell in the
+    /// editor's preview — usually on a different screen entirely from the physical wall — works
+    /// exactly like hovering the real cell. Wired as a delegate rather than a hard reference to
+    /// EditorWindow, since CompositorWindow otherwise has no reason to know the editor exists at
+    /// all (the reference normally runs the other way — EditorWindow holds a CompositorWindow,
+    /// not vice versa).
+    /// </summary>
+    public Func<(int Row, int Col)?>? SecondaryCellLocator { get; set; }
+
     private readonly record struct CellKey(int Row, int Col)
     {
         public static CellKey Of(Cell cell) => new(cell.Row, cell.Col);
@@ -295,21 +307,37 @@ public partial class CompositorWindow : Window
     /// space Cell.Bounds already uses — mirrors the exact technique OnWindowDropped already uses
     /// to hit-test a dropped window's position against every cell (Left/Top + Bounds, compared
     /// directly against a physical-pixel Win32 coordinate), rather than inventing a second way to
-    /// do the same conversion.
+    /// do the same conversion. Falls back to SecondaryCellLocator (the editor's own grid-preview
+    /// hit test, if one is wired up) when the cursor isn't over the wall's own display at all —
+    /// the editor is usually on a completely different screen from the physical wall, so an
+    /// operator working from the editor shouldn't have to move the mouse onto the hub display
+    /// just to fullscreen a cell.
     /// </summary>
     private CellKey? FindCellUnderCursor()
     {
-        if (NativeAppHost.TryGetCursorPos() is not { } cursor) return null;
-
-        var relativeX = cursor.X - Left;
-        var relativeY = cursor.Y - Top;
-        foreach (var runtime in _runtimes.Values)
+        if (NativeAppHost.TryGetCursorPos() is { } cursor)
         {
-            var bounds = runtime.Cell.Bounds;
-            if (relativeX < bounds.X || relativeX >= bounds.X + bounds.Width) continue;
-            if (relativeY < bounds.Y || relativeY >= bounds.Y + bounds.Height) continue;
-            return CellKey.Of(runtime.Cell);
+            var relativeX = cursor.X - Left;
+            var relativeY = cursor.Y - Top;
+            foreach (var runtime in _runtimes.Values)
+            {
+                var bounds = runtime.Cell.Bounds;
+                if (relativeX < bounds.X || relativeX >= bounds.X + bounds.Width) continue;
+                if (relativeY < bounds.Y || relativeY >= bounds.Y + bounds.Height) continue;
+                return CellKey.Of(runtime.Cell);
+            }
         }
+
+        // The editor's preview can be showing a preset/selection that no longer matches what's
+        // actually live on the wall (e.g. a preset changed in the editor but never pushed) — a
+        // resulting (row, col) that isn't one of the wall's current runtimes is simply not a
+        // valid fullscreen target, not an error.
+        if (SecondaryCellLocator?.Invoke() is { } editorCell)
+        {
+            var key = new CellKey(editorCell.Row, editorCell.Col);
+            if (_runtimes.ContainsKey(key)) return key;
+        }
+
         return null;
     }
 
