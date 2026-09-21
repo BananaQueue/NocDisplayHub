@@ -211,6 +211,35 @@ public partial class CompositorWindow : Window
         }
     }
 
+    /// <summary>
+    /// Rebuilds the entire wall from a different profile, without closing/reopening the window.
+    /// Requested so switching profiles in the editor doesn't need a Stop/Launch Wall cycle.
+    /// Unlike <see cref="UpdateCellBinding"/> (deliberately scoped to one cell, for routine URL
+    /// edits), a profile switch can change the preset and every binding at once — there's no way
+    /// to reconcile that incrementally against the existing grid, so every current cell's content
+    /// is torn down first (honoring the same borrowed-vs-owned distinction as <see cref="OnClosed"/>
+    /// — a drag-and-drop-captured window gets released, never closed, exactly as it would if the
+    /// wall were actually shutting down) and the whole grid is rebuilt from scratch via
+    /// <see cref="BuildCells"/>, exactly like a fresh launch would produce, just without the window
+    /// itself ever closing. Skipping the teardown step here would leak/orphan every existing
+    /// WebView2 and native window instead of properly disposing or giving them back.
+    /// </summary>
+    public void ReloadFromProfile(LayoutManager manager)
+    {
+        foreach (var runtime in _runtimes.Values)
+        {
+            try
+            {
+                TeardownCellContent(runtime);
+            }
+            catch
+            {
+                // Best-effort cleanup only — still proceed to rebuild below.
+            }
+        }
+        BuildCells(manager);
+    }
+
     /// <summary>Produces a short, specific on-screen message for a cell that failed to start, instead of a generic "Dark".</summary>
     private static string DescribeStartupError(CellRuntime runtime, Exception ex)
     {

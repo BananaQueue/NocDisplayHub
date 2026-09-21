@@ -154,14 +154,22 @@ public partial class EditorWindow : Window
 
         ProfileManager.SetActiveProfileName(name);
         _manager = ProfileManager.LoadActive();
-        // A full profile swap can change the preset and every binding at once — unlike a single
-        // cell's URL, that's too broad a change to try to reconcile live against a running wall
-        // (see UpdateCellBinding, which is deliberately scoped to one cell at a time). Deliberately
-        // does NOT touch _wallWindow here; Stop/Launch Wall already exists for "start over with a
-        // different layout", which switching profiles effectively is.
+        PushProfileToWallIfRunning();
         ResetSelection();
+        UpdateLiveCellButtonsVisibility();
         RenderPreview();
     }
+
+    /// <summary>
+    /// Pushes the current _manager state to an already-running wall, so switching (or deleting) a
+    /// profile doesn't need a Stop/Launch Wall cycle. Unlike a single cell's URL — which
+    /// UpdateCellBinding updates in place, cell by cell — a full profile swap can change the
+    /// preset and every binding at once, too broad a change to reconcile incrementally; see
+    /// CompositorWindow.ReloadFromProfile, which tears down every existing cell's content
+    /// (honoring the same borrowed-vs-owned rules as closing the wall normally does) and rebuilds
+    /// the whole grid from scratch, without the window itself ever closing.
+    /// </summary>
+    private void PushProfileToWallIfRunning() => _wallWindow?.ReloadFromProfile(_manager);
 
     private void SaveAsProfileButton_Click(object sender, RoutedEventArgs e)
     {
@@ -193,7 +201,9 @@ public partial class EditorWindow : Window
             ProfileManager.SetActiveProfileName(ProfileManager.ListProfiles()[0]);
         }
         _manager = ProfileManager.LoadActive();
+        PushProfileToWallIfRunning();
         ResetSelection();
+        UpdateLiveCellButtonsVisibility();
         LoadProfilesIntoSelector();
         RenderPreview();
     }
