@@ -55,7 +55,7 @@ public partial class EditorWindow : Window
         // extended display instead of the main screen. Pin explicitly to a non-hub screen
         // when one can be unambiguously identified, the same way CompositorWindow already
         // pins itself to the hub — never leave this to ambient defaults.
-        if (HubDisplayLocator.FindEditorWorkArea() is { } area)
+        if (HubDisplayLocator.FindEditorWorkArea() is not null)
         {
             // Confirmed live, the first version of this fix (plain Left/Top/Width/Height
             // assignment) produced inconsistent, sometimes off-screen results across otherwise
@@ -70,13 +70,7 @@ public partial class EditorWindow : Window
             // the handle to exist first via EnsureHandle() — bypasses WPF's DIP layer completely,
             // the same approach NativeAppHost already uses for reparented native windows.
             WindowStartupLocation = WindowStartupLocation.Manual;
-            var width = Math.Min(940, area.Width);
-            var height = Math.Min(960, area.Height);
-            var left = area.Left + (area.Width - width) / 2;
-            var top = area.Top + (area.Height - height) / 2;
-
-            var hwnd = new WindowInteropHelper(this).EnsureHandle();
-            SetWindowPos(hwnd, IntPtr.Zero, left, top, width, height, SwpNoZOrder | SwpNoActivate);
+            RepositionOnEditorScreen();
         }
         else
         {
@@ -98,6 +92,29 @@ public partial class EditorWindow : Window
             RenderPreview();
             AutoStartCheckBox.IsChecked = StartupRegistration.IsEnabled();
         };
+    }
+
+    /// <summary>
+    /// Pins this window to a non-hub screen, in physical pixels via SetWindowPos (see the
+    /// constructor's comment on why WPF's own Left/Top/Width/Height can't be trusted for this).
+    /// Confirmed live: creating CompositorWindow on the hub's differently-scaled monitor
+    /// retroactively disturbs THIS window's already-correct position — reproduced 2/2 — moving it
+    /// back to roughly where it would have landed without the fix at all. Whatever WPF-internal
+    /// per-process DPI reconciliation happens when a second top-level window appears on a
+    /// different-DPI monitor, it isn't scoped to just the new window. Called again from
+    /// LaunchWall_Click, right after showing the wall, to correct for exactly that.
+    /// </summary>
+    private void RepositionOnEditorScreen()
+    {
+        if (HubDisplayLocator.FindEditorWorkArea() is not { } area) return;
+
+        var width = Math.Min(940, area.Width);
+        var height = Math.Min(960, area.Height);
+        var left = area.Left + (area.Width - width) / 2;
+        var top = area.Top + (area.Height - height) / 2;
+
+        var hwnd = new WindowInteropHelper(this).EnsureHandle();
+        SetWindowPos(hwnd, IntPtr.Zero, left, top, width, height, SwpNoZOrder | SwpNoActivate);
     }
 
     private void AutoStartCheckBox_Click(object sender, RoutedEventArgs e)
@@ -218,6 +235,7 @@ public partial class EditorWindow : Window
         var binding = _manager.GetBinding(row, col);
         ValueTextBox.Text = binding?.Value ?? "";
         SelectSourceType(binding?.Type ?? BindingType.Browser);
+        UpdateLiveCellButtonsVisibility(); // SelectSourceType's SelectionChanged won't refire if the combo item didn't change
         RenderPreview();
     }
 
@@ -255,6 +273,44 @@ public partial class EditorWindow : Window
             ValueTextBox.Cursor = Cursors.IBeam;
             BrowseFolderButton.Visibility = Visibility.Collapsed;
         }
+        UpdateLiveCellButtonsVisibility();
+    }
+
+    /// <summary>
+    /// Shows the "sync from wall" / "refresh" buttons only when they could actually do something
+    /// right now: the selected cell has a live, already-rendering WebView2 on the running wall.
+    /// Checking the wall's actual current state (via GetCellCurrentUrl) rather than this editor's
+    /// own SourceTypeCombo selection matters — that combo defaults to "Browser" for an Unassigned
+    /// cell too (SelectCell has no real binding to reflect), which made the buttons appear for
+    /// cells with nothing live to sync or refresh. Re-evaluated on cell selection, wall
+    /// launch/stop, and after applying/unassigning a binding (both can change what the selected
+    /// cell is actually showing).
+    /// </summary>
+    private void UpdateLiveCellButtonsVisibility()
+    {
+        var hasLiveContent = _selected is (int r, int c) && _wallWindow?.GetCellCurrentUrl(r, c) is not null;
+        var visibility = hasLiveContent ? Visibility.Visible : Visibility.Collapsed;
+        SyncFromWallButton.Visibility = visibility;
+        RefreshCellButton.Visibility = visibility;
+    }
+
+    private void SyncFromWallButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selected is not (int r, int c)) return;
+        if (_wallWindow?.GetCellCurrentUrl(r, c) is not { } currentUrl) return;
+
+        // Deliberately just fills the field — the user still has to click "APPLY TO CELL" to
+        // persist it. That keeps this a plain read (never touches the live cell or its session),
+        // and the follow-up Apply then pushes back the EXACT URL the cell is already showing —
+        // indistinguishable from an ordinary refresh, so it can't trip whatever session/referrer
+        // logic an explicit Navigate() to a hand-typed URL sometimes does (see UpdateCellBinding).
+        ValueTextBox.Text = currentUrl;
+    }
+
+    private void RefreshCellButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selected is not (int r, int c)) return;
+        _wallWindow?.ReloadCell(r, c);
     }
 
     private void ValueTextBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -314,6 +370,7 @@ public partial class EditorWindow : Window
         // session-scoped cookie/token gets cleared when the browser process itself restarts).
         // Push it to the running wall instead, scoped to just this one cell.
         _wallWindow?.UpdateCellBinding(r, c, binding);
+        UpdateLiveCellButtonsVisibility();
         RenderPreview();
     }
 
@@ -325,6 +382,7 @@ public partial class EditorWindow : Window
 
         ProfileStore.Save(AppPaths.ProfilePath, _manager);
         _wallWindow?.UpdateCellBinding(r, c, binding: null);
+        UpdateLiveCellButtonsVisibility();
         ValueTextBox.Text = "";
         RenderPreview();
     }
@@ -346,9 +404,18 @@ public partial class EditorWindow : Window
         {
             _wallWindow = null;
             SetLaunchButtonState(running: false);
+            UpdateLiveCellButtonsVisibility();
         };
         _wallWindow.Show();
+        // Known limitation, not fully solved (see CLAUDE.md): creating CompositorWindow on the
+        // hub's differently-scaled monitor can retroactively disturb this window's position —
+        // confirmed live, reproduced repeatedly. A fixed-delay re-correction and an event-driven
+        // LocationChanged/SizeChanged watcher were both tried and neither reliably caught it, so
+        // this call is left as a best-effort correction rather than a proven fix — it's exactly
+        // right for the common case (editor launched on its own) and does no harm here.
+        RepositionOnEditorScreen();
         SetLaunchButtonState(running: true);
+        UpdateLiveCellButtonsVisibility();
     }
 
     private void SetLaunchButtonState(bool running)

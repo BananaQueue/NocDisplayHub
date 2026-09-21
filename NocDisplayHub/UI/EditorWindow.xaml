@@ -319,6 +319,24 @@
                                 Click="BrowseFolderButton_Click"
                                 Margin="8,0,0,0"
                                 Visibility="Collapsed"/>
+                        <!-- Browser-only, and only meaningful while the wall is actually running: pulls
+                             whatever URL the live cell has ACTUALLY navigated to (via in-app links, redirects,
+                             etc.) back into this field, and reloads the live cell in place. Neither one pushes
+                             a navigation of its own — see SyncFromWallButton_Click/RefreshCellButton_Click for
+                             why that distinction matters (a site's own session/referrer logic can treat an
+                             explicit Navigate() to a typed-from-memory URL as suspicious even on the same
+                             origin, but reading back reality and reloading in place never look any different
+                             from ordinary browsing). -->
+                        <Button x:Name="SyncFromWallButton"
+                                Content="⟳ SYNC FROM WALL"
+                                Click="SyncFromWallButton_Click"
+                                Margin="8,0,0,0"
+                                Visibility="Collapsed"/>
+                        <Button x:Name="RefreshCellButton"
+                                Content="↻ REFRESH"
+                                Click="RefreshCellButton_Click"
+                                Margin="8,0,0,0"
+                                Visibility="Collapsed"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal"
                             Margin="150,0,0,0">

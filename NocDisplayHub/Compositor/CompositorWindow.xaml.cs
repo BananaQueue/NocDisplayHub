@@ -729,4 +729,33 @@ public partial class CompositorWindow : Window
         runtime.ConsecutiveFailures = 0;
         StartContent(runtime);
     }
+
+    /// <summary>
+    /// Whatever URL a live browser cell has actually navigated to right now — via in-app links,
+    /// redirects, JS navigation, anything — not necessarily whatever it was originally bound to.
+    /// Confirmed live: even <see cref="UpdateCellBinding"/>'s in-place Navigate() can still trip a
+    /// site's own session/referrer logic, since an explicit Navigate() to a URL typed from memory
+    /// can look like an out-of-band jump even on the same origin. Reading back the exact current
+    /// URL (including any SPA router state, query string, or token the site itself appended) and
+    /// persisting *that* — rather than retyping one by hand — never looks any different from
+    /// ordinary browsing, so it can't trigger whatever the site's own logic is reacting to. Returns
+    /// null if the cell isn't a live, currently-rendering browser cell.
+    /// </summary>
+    public string? GetCellCurrentUrl(int row, int col) =>
+        _runtimes.TryGetValue(new CellKey(row, col), out var runtime) ? runtime.WebView?.CoreWebView2?.Source : null;
+
+    /// <summary>
+    /// Reloads a live browser cell in place — the WebView2 equivalent of pressing F5 on whatever
+    /// page it's actually showing right now. Deliberately does not touch the cell's binding or
+    /// profile.json at all; this is purely "unstick a frozen page," not a way to change what a
+    /// cell points at. Safe for a session-sensitive page for the same reason GetCellCurrentUrl is:
+    /// reloading the exact page already displayed is indistinguishable from ordinary browsing.
+    /// </summary>
+    public void ReloadCell(int row, int col)
+    {
+        if (_runtimes.TryGetValue(new CellKey(row, col), out var runtime))
+        {
+            runtime.WebView?.CoreWebView2?.Reload();
+        }
+    }
 }
