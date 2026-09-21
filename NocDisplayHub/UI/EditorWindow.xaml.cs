@@ -308,6 +308,12 @@ public partial class EditorWindow : Window
         _manager.AssignBinding(r, c, binding);
 
         ProfileStore.Save(AppPaths.ProfilePath, _manager);
+        // Confirmed live: without this, the only way to see a URL change take effect at all was
+        // a full Stop/Launch Wall cycle — restarting the whole compositor process just to change
+        // one cell, which silently logged every other authenticated browser cell out too (a
+        // session-scoped cookie/token gets cleared when the browser process itself restarts).
+        // Push it to the running wall instead, scoped to just this one cell.
+        _wallWindow?.UpdateCellBinding(r, c, binding);
         RenderPreview();
     }
 
@@ -318,6 +324,7 @@ public partial class EditorWindow : Window
         _manager.ClearBinding(r, c);
 
         ProfileStore.Save(AppPaths.ProfilePath, _manager);
+        _wallWindow?.UpdateCellBinding(r, c, binding: null);
         ValueTextBox.Text = "";
         RenderPreview();
     }

@@ -633,37 +633,100 @@ public partial class CompositorWindow : Window
         {
             try
             {
-                if (runtime.TrackedWindowHandle is { } hwnd && NativeAppHost.IsWindowAlive(hwnd))
-                {
-                    if (runtime.IsDragDropCaptured)
-                    {
-                        // Confirmed live: sending WM_CLOSE to a drag-and-drop-captured window
-                        // (a window we only borrowed, never launched) took down every other
-                        // window of that same app too — closing the wall with a dragged-in
-                        // Chrome tab closed the whole browser, including tabs never touched by
-                        // the wall. Chrome-family multi-window apps decide whether to fully quit
-                        // based on how many top-level windows they still have, and reparenting
-                        // silently drops a window from that count without the app knowing, so it
-                        // can conclude its last real window just closed even when others are
-                        // still open elsewhere. Give it back instead — never ask it to close.
-                        NativeAppHost.Release(hwnd);
-                    }
-                    else
-                    {
-                        // A window we explicitly launched or that Explorer opened for this cell
-                        // — safe to ask to close, since it exists only because of this cell.
-                        NativeAppHost.CloseWindow(hwnd);
-                    }
-                }
-                else if (runtime.Process is { HasExited: false } process)
-                {
-                    process.CloseMainWindow();
-                }
+                TeardownCellContent(runtime);
             }
             catch
             {
                 // Best-effort cleanup only.
             }
         }
+    }
+
+    /// <summary>
+    /// Releases/closes/disposes whatever a cell is currently showing, honoring the same
+    /// ownership rules as everywhere else: give back a drag-and-drop-borrowed window rather
+    /// than closing it (see <see cref="CellRuntime.IsDragDropCaptured"/>), close a window or
+    /// process we actually launched ourselves. Resets the runtime's tracking fields so it's
+    /// ready for <see cref="StartContent"/> to populate again. Shared by <see cref="OnClosed"/>
+    /// (the whole wall shutting down) and <see cref="UpdateCellBinding"/> (one cell's binding
+    /// changing live) — the exact same teardown either way, just at different scopes.
+    /// </summary>
+    private static void TeardownCellContent(CellRuntime runtime)
+    {
+        if (runtime.TrackedWindowHandle is { } hwnd && NativeAppHost.IsWindowAlive(hwnd))
+        {
+            if (runtime.IsDragDropCaptured)
+            {
+                // Confirmed live: sending WM_CLOSE to a drag-and-drop-captured window
+                // (a window we only borrowed, never launched) took down every other
+                // window of that same app too — closing the wall with a dragged-in
+                // Chrome tab closed the whole browser, including tabs never touched by
+                // the wall. Chrome-family multi-window apps decide whether to fully quit
+                // based on how many top-level windows they still have, and reparenting
+                // silently drops a window from that count without the app knowing, so it
+                // can conclude its last real window just closed even when others are
+                // still open elsewhere. Give it back instead — never ask it to close.
+                NativeAppHost.Release(hwnd);
+            }
+            else
+            {
+                // A window we explicitly launched or that Explorer opened for this cell
+                // — safe to ask to close, since it exists only because of this cell.
+                NativeAppHost.CloseWindow(hwnd);
+            }
+        }
+        else if (runtime.Process is { HasExited: false } process)
+        {
+            process.CloseMainWindow();
+        }
+
+        runtime.WebView?.Dispose();
+        runtime.WebView = null;
+        runtime.TrackedWindowHandle = null;
+        runtime.Process = null;
+        runtime.IsDragDropCaptured = false;
+    }
+
+    /// <summary>
+    /// Pushes a binding change to an already-running wall for one cell, without restarting the
+    /// whole compositor. Confirmed live: the only way to see a cell's URL change take effect
+    /// used to be a full Stop/Launch Wall cycle, which tears down every cell's WebView2 (and its
+    /// underlying browser process) just to change one — for a site using session-scoped cookies
+    /// or tokens, that silently logs every authenticated cell out, not just the one being edited.
+    ///
+    /// If the cell already has a live WebView2 and the new binding is also Browser, navigates the
+    /// EXISTING control to the new URL in place — the same top-level browsing context, the same
+    /// profile — exactly like typing a new address into an already-open tab, so cookies AND
+    /// sessionStorage both survive. Anything else (a type change, or no live WebView2 to reuse)
+    /// falls back to a full teardown-and-restart, but still scoped to just this one cell — every
+    /// other cell's content, and its session, is completely untouched either way.
+    /// </summary>
+    public void UpdateCellBinding(int row, int col, CellBinding? binding)
+    {
+        if (!_runtimes.TryGetValue(new CellKey(row, col), out var runtime)) return;
+
+        if (binding?.Type == BindingType.Browser
+            && runtime.Cell.Binding?.Type == BindingType.Browser
+            && runtime.WebView?.CoreWebView2 is { } coreWebView)
+        {
+            runtime.Cell = new Cell { Row = row, Col = col, Bounds = runtime.Cell.Bounds, Binding = binding, Status = runtime.Cell.Status };
+            ActivityLog.Write(AppPaths.ActivityLogPath, runtime.Cell.Label, $"URL updated live, in place (no restart): {binding.Value}");
+            coreWebView.Navigate(binding.Value);
+            return;
+        }
+
+        try
+        {
+            TeardownCellContent(runtime);
+        }
+        catch
+        {
+            // Best-effort cleanup only — still proceed to start the new binding below.
+        }
+
+        runtime.Cell = new Cell { Row = row, Col = col, Bounds = runtime.Cell.Bounds, Binding = binding, Status = CellStatus.Unbound };
+        runtime.GaveUp = false;
+        runtime.ConsecutiveFailures = 0;
+        StartContent(runtime);
     }
 }
