@@ -296,7 +296,7 @@ public partial class CompositorWindow : Window
             // viewport (100vw/100vh) — it has no concept of "the rest of the desktop", so a page
             // designed for a full monitor (fixed-width cards, desktop-oriented layout) looks
             // cramped, or shows scrollbars, once squeezed into a small grid cell. Explicit user
-            // request: make every browser cell render as though it had a full HubSpec-width
+            // request: make every browser cell render as though it had a full HubSpec-sized
             // viewport, then let that rendering scale down to the cell's actual size — the exact
             // opposite direction from the reverted fix above, and for a genuinely different
             // reason (deliberately faking a bigger viewport, not correcting a device-scale
@@ -304,8 +304,24 @@ public partial class CompositorWindow : Window
             // HwndHost control like WebView2: the zoom is internal to Chromium, so input
             // coordinates are still mapped correctly by WebView2 itself — a click on a visually
             // shrunk button still lands correctly, no interactivity is actually lost.
-            // A full 1x1 cell (already HubSpec-width) computes to exactly 1.0 — no change there.
-            webView.ZoomFactor = runtime.Cell.Bounds.Width / HubSpec.InputWidth;
+            //
+            // Confirmed live: using the WIDTH ratio alone left a visible empty gap at the bottom
+            // of every cell whose aspect ratio is narrower than HubSpec's 16:9 (any grid split
+            // more than 1 row — a 2x3 cell is roughly 1.19:1). ZoomFactor is one uniform scalar,
+            // so it can only match ONE dimension exactly; matching width alone made the page's
+            // EFFECTIVE viewport (physical size / zoom) taller than a real 16:9 monitor would be
+            // (e.g. a 640x540 2x3 cell at width-only zoom ≈0.333 effectively sees ~1920x1620) —
+            // dashboards designed for a normal screen don't stretch to fill that extra height, so
+            // it shows as blank space below the content. Using the LARGER of the two ratios instead
+            // makes the effective viewport's SMALLER dimension match HubSpec exactly (no gap on
+            // that axis), at the cost of the other dimension coming in narrower than a full
+            // HubSpec-sized screen would be — i.e. content fills the cell completely, cropping
+            // slightly on one axis instead of leaving empty space on the other. A full 1x1 cell
+            // (already exactly HubSpec-sized) still computes to exactly 1.0 either way.
+            var zoomFactor = Math.Max(
+                runtime.Cell.Bounds.Width / HubSpec.InputWidth,
+                runtime.Cell.Bounds.Height / HubSpec.InputHeight);
+            webView.ZoomFactor = zoomFactor;
 
             NudgeWebViewLayout(webView);
         };
