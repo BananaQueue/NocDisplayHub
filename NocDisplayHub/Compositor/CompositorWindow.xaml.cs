@@ -71,6 +71,15 @@ public partial class CompositorWindow : Window
     /// </summary>
     public Func<(int Row, int Col)?>? SecondaryCellLocator { get; set; }
 
+    /// <summary>
+    /// Set by EditorWindow (before Show()) when it launched this wall itself, so "Launch Wall"
+    /// always previews whatever profile is actually loaded for editing — which may differ from
+    /// ProfileManager.LoadDefault(), the profile a genuine kiosk auto-launch boots into. Null for
+    /// a real auto-launch (no editor involved at all), in which case OnLoaded falls back to
+    /// LoadDefault() as usual.
+    /// </summary>
+    public LayoutManager? InitialProfileOverride { get; set; }
+
     private readonly record struct CellKey(int Row, int Col)
     {
         public static CellKey Of(Cell cell) => new(cell.Row, cell.Col);
@@ -111,7 +120,12 @@ public partial class CompositorWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        var manager = ProfileManager.LoadActive();
+        // InitialProfileOverride (set by EditorWindow before Show(), when it launched this wall
+        // itself) always wins — see its own doc comment. Otherwise this is a genuine auto-launch
+        // (kiosk boot on Windows startup), which boots into whatever's marked as the default
+        // profile, deliberately not just "whatever was last active" — see
+        // ProfileManager.GetDefaultProfileName.
+        var manager = InitialProfileOverride ?? ProfileManager.LoadDefault();
         BuildCells(manager);
         _watchdogTimer.Start();
         _refreshTimer.Start();

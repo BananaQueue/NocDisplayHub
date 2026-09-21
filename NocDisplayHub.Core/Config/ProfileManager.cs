@@ -34,6 +34,7 @@ public static class ProfileManager
     public static string ProfilesDirectory => Path.Combine(RootDirectory, "Profiles");
 
     private static string ActiveProfileMarkerPath => Path.Combine(RootDirectory, "active-profile.txt");
+    private static string DefaultProfileMarkerPath => Path.Combine(RootDirectory, "default-profile.txt");
 
     public static string PathFor(string profileName) =>
         Path.Combine(ProfilesDirectory, $"{SanitizeFileName(profileName)}.json");
@@ -82,6 +83,36 @@ public static class ProfileManager
 
     public static void SaveActive(LayoutManager manager) => ProfileStore.Save(PathFor(GetActiveProfileName()), manager);
 
+    /// <summary>
+    /// The profile CompositorWindow.OnLoaded uses for a genuine auto-launch (kiosk boot on
+    /// Windows startup) — deliberately a separate concept from <see cref="GetActiveProfileName"/>
+    /// (which the editor uses for "whichever profile I'm currently viewing/editing"), so browsing
+    /// or tweaking a different profile in the editor never changes what boots on the actual kiosk
+    /// unless explicitly marked with <see cref="SetDefaultProfileName"/>. Falls back to whatever
+    /// GetActiveProfileName resolves to when no default has ever been explicitly set — an
+    /// existing install upgrading into this feature keeps booting into exactly what it already did.
+    /// </summary>
+    public static string GetDefaultProfileName()
+    {
+        MigrateLegacyProfileIfNeeded();
+        var name = File.Exists(DefaultProfileMarkerPath) ? File.ReadAllText(DefaultProfileMarkerPath).Trim() : "";
+        if (!string.IsNullOrEmpty(name) && File.Exists(PathFor(name)))
+        {
+            return name;
+        }
+        return GetActiveProfileName();
+    }
+
+    public static void SetDefaultProfileName(string profileName)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(DefaultProfileMarkerPath)!);
+        File.WriteAllText(DefaultProfileMarkerPath, profileName);
+    }
+
+    public static bool IsDefaultProfile(string profileName) => GetDefaultProfileName() == profileName;
+
+    public static LayoutManager LoadDefault() => ProfileStore.Load(PathFor(GetDefaultProfileName()));
+
     /// <summary>Saves under a (possibly new) name and makes it the active profile.</summary>
     public static void SaveAs(string profileName, LayoutManager manager)
     {
@@ -111,6 +142,7 @@ public static class ProfileManager
         Directory.CreateDirectory(ProfilesDirectory);
         File.Copy(LegacyProfilePath, PathFor(DefaultProfileName), overwrite: false);
         SetActiveProfileName(DefaultProfileName);
+        SetDefaultProfileName(DefaultProfileName);
     }
 
     private static string SanitizeFileName(string name)

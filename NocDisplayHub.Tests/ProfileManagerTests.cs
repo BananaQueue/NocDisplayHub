@@ -110,7 +110,60 @@ public class ProfileManagerTests : IDisposable
 
         Assert.Equal([ProfileManager.DefaultProfileName], profiles);
         Assert.Equal(ProfileManager.DefaultProfileName, ProfileManager.GetActiveProfileName());
+        Assert.Equal(ProfileManager.DefaultProfileName, ProfileManager.GetDefaultProfileName());
         Assert.Equal("https://legacy.example", ProfileManager.LoadActive().GetBinding(0, 0)!.Value);
+    }
+
+    [Fact]
+    public void GetDefaultProfileName_NeverExplicitlySet_FallsBackToActiveProfile()
+    {
+        ProfileManager.SaveAs("Day Shift", new LayoutManager());
+        ProfileManager.SaveAs("Night Shift", new LayoutManager()); // makes Night Shift active
+
+        Assert.Equal("Night Shift", ProfileManager.GetDefaultProfileName());
+        Assert.False(ProfileManager.IsDefaultProfile("Day Shift"));
+    }
+
+    [Fact]
+    public void SetDefaultProfileName_IsIndependentOfWhichProfileIsActive()
+    {
+        ProfileManager.SaveAs("Day Shift", new LayoutManager());
+        ProfileManager.SaveAs("Night Shift", new LayoutManager());
+        ProfileManager.SetDefaultProfileName("Day Shift");
+
+        // Switching which profile is active (e.g. browsing it in the editor) must not disturb
+        // the separately-marked default used for a real kiosk auto-launch.
+        ProfileManager.SetActiveProfileName("Night Shift");
+
+        Assert.Equal("Day Shift", ProfileManager.GetDefaultProfileName());
+        Assert.Equal("Night Shift", ProfileManager.GetActiveProfileName());
+        Assert.True(ProfileManager.IsDefaultProfile("Day Shift"));
+        Assert.False(ProfileManager.IsDefaultProfile("Night Shift"));
+    }
+
+    [Fact]
+    public void LoadDefault_LoadsWhicheverProfileIsMarkedDefault()
+    {
+        var dayShift = new LayoutManager();
+        dayShift.AssignBinding(0, 0, new CellBinding(BindingType.Browser, "https://day.example"));
+        ProfileManager.SaveAs("Day Shift", dayShift);
+        ProfileManager.SaveAs("Night Shift", new LayoutManager());
+        ProfileManager.SetDefaultProfileName("Day Shift");
+
+        var loaded = ProfileManager.LoadDefault();
+
+        Assert.Equal("https://day.example", loaded.GetBinding(0, 0)!.Value);
+    }
+
+    [Fact]
+    public void GetDefaultProfileName_MarkerPointsAtDeletedProfile_FallsBackToFirstRemaining()
+    {
+        ProfileManager.SaveAs("Alpha", new LayoutManager());
+        ProfileManager.SaveAs("Beta", new LayoutManager());
+        ProfileManager.SetDefaultProfileName("Beta");
+        ProfileManager.DeleteProfile("Beta");
+
+        Assert.Equal("Alpha", ProfileManager.GetDefaultProfileName());
     }
 
     [Fact]

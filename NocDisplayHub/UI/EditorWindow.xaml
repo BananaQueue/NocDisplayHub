@@ -291,6 +291,15 @@
                         Content="DELETE"
                         Click="DeleteProfileButton_Click"
                         Margin="8,0,0,0"/>
+                <!-- Decoupled from the dropdown selection above on purpose: selecting a profile
+                     here only loads it for viewing/editing (and is what "LAUNCH WALL" previews).
+                     This is the one thing that actually changes what a real kiosk auto-launch
+                     boots into on Windows startup — see ProfileManager.GetDefaultProfileName. -->
+                <CheckBox x:Name="SetDefaultProfileCheckBox"
+                        Content="SET AS DEFAULT (AUTO-LAUNCH)"
+                        VerticalAlignment="Center"
+                        Margin="20,0,0,0"
+                        Click="SetDefaultProfileCheckBox_Click"/>
             </StackPanel>
         </Border>
 

@@ -158,6 +158,7 @@ public partial class EditorWindow : Window
         ProfileSelectorCombo.ItemsSource = ProfileManager.ListProfiles();
         ProfileSelectorCombo.SelectedItem = ProfileManager.GetActiveProfileName();
         ProfileSelectorCombo.SelectionChanged += ProfileSelectorCombo_SelectionChanged;
+        UpdateSetDefaultCheckboxState();
     }
 
     private void ProfileSelectorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -170,7 +171,43 @@ public partial class EditorWindow : Window
         ResetSelection();
         UpdateLiveCellButtonsVisibility();
         UpdateGroupButtonsVisibility();
+        UpdateSetDefaultCheckboxState();
         RenderPreview();
+    }
+
+    /// <summary>
+    /// Reflects whether the profile currently loaded for editing is ALSO the one marked as the
+    /// default (see SetDefaultProfileCheckBox_Click) — re-evaluated wherever the selector's
+    /// choice or its underlying list can change (selection, save-as, delete, initial load).
+    /// </summary>
+    private void UpdateSetDefaultCheckboxState()
+    {
+        if (ProfileSelectorCombo.SelectedItem is string name)
+        {
+            SetDefaultProfileCheckBox.IsChecked = ProfileManager.IsDefaultProfile(name);
+        }
+    }
+
+    /// <summary>
+    /// Marks whichever profile is currently loaded for editing as the one a genuine kiosk
+    /// auto-launch boots into — deliberately separate from just selecting it in the dropdown
+    /// (which only changes what's loaded here for editing/previewing, see
+    /// ProfileManager.GetDefaultProfileName for why). There must always be exactly one default,
+    /// so unchecking the box for the CURRENT default has no valid resulting state — it just snaps
+    /// back to checked rather than leaving nothing marked.
+    /// </summary>
+    private void SetDefaultProfileCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProfileSelectorCombo.SelectedItem is not string name) return;
+
+        if (SetDefaultProfileCheckBox.IsChecked == true)
+        {
+            ProfileManager.SetDefaultProfileName(name);
+        }
+        else
+        {
+            SetDefaultProfileCheckBox.IsChecked = true;
+        }
     }
 
     /// <summary>
@@ -208,10 +245,16 @@ public partial class EditorWindow : Window
             return;
         }
 
-        // If the deleted profile was the active one, fall back to whatever's left before reloading.
+        // If the deleted profile was the active one (or the default auto-launch one), fall back
+        // to whatever's left before reloading — both are independent markers that could each be
+        // pointing at the now-deleted name.
         if (ProfileManager.GetActiveProfileName() == name)
         {
             ProfileManager.SetActiveProfileName(ProfileManager.ListProfiles()[0]);
+        }
+        if (ProfileManager.GetDefaultProfileName() == name)
+        {
+            ProfileManager.SetDefaultProfileName(ProfileManager.ListProfiles()[0]);
         }
         _manager = ProfileManager.LoadActive();
         PushProfileToWallIfRunning();
@@ -652,7 +695,19 @@ public partial class EditorWindow : Window
         }
 
         ProfileManager.SaveActive(_manager);
-        _wallWindow = new CompositorWindow();
+        _wallWindow = new CompositorWindow
+        {
+            // CompositorWindow.OnLoaded boots into ProfileManager.LoadDefault() by default — the
+            // profile marked SET AS DEFAULT, meant for a genuine kiosk auto-launch — which may not
+            // be the same one currently loaded here for editing. "Launch Wall" is a manual
+            // preview/test action, so it should always show whatever's actually on screen in the
+            // editor right now, regardless of which profile is marked default. Set BEFORE Show()
+            // (same pattern as SecondaryCellLocator below) rather than pushing via
+            // ReloadFromProfile afterward, since Show() does not reliably guarantee OnLoaded has
+            // already run by the time it returns — a post-Show push could race with OnLoaded's
+            // own BuildCells and get silently overwritten.
+            InitialProfileOverride = _manager,
+        };
         _wallWindow.SecondaryCellLocator = GetSelectedCellForFullscreen;
         _wallWindow.Closed += (_, _) =>
         {
