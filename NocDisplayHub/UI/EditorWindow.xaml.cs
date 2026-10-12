@@ -230,6 +230,29 @@ public partial class EditorWindow : Window
         LoadProfilesIntoSelector();
     }
 
+    private void RestoreProfileButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProfileSelectorCombo.SelectedItem is not string name) return;
+
+        var backups = ProfileManager.ListBackups(name);
+        if (backups.Count == 0)
+        {
+            MessageBox.Show(this, $"\"{name}\" has no earlier versions saved yet. A version is kept each time a change is saved over it.",
+                "Restore Previous Version", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new RestoreBackupDialog(name, backups) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.Selected is not { } chosen) return;
+
+        _manager = ProfileManager.RestoreBackup(name, chosen);
+        PushProfileToWallIfRunning();
+        ResetSelection();
+        UpdateLiveCellButtonsVisibility();
+        UpdateGroupButtonsVisibility();
+        RenderPreview();
+    }
+
     private void DeleteProfileButton_Click(object sender, RoutedEventArgs e)
     {
         if (ProfileSelectorCombo.SelectedItem is not string name) return;

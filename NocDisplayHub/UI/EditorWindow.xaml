@@ -280,7 +280,7 @@
                         Style="{StaticResource PanelLabel}"
                         Margin="0,0,14,0"/>
                 <ComboBox x:Name="ProfileSelectorCombo"
-                        Width="220"
+                        Width="170"
                         VerticalAlignment="Center"
                         SelectionChanged="ProfileSelectorCombo_SelectionChanged"/>
                 <Button x:Name="SaveAsProfileButton"
@@ -291,14 +291,19 @@
                         Content="DELETE"
                         Click="DeleteProfileButton_Click"
                         Margin="8,0,0,0"/>
+                <Button x:Name="RestoreProfileButton"
+                        Content="RESTORE…"
+                        Click="RestoreProfileButton_Click"
+                        Margin="8,0,0,0"/>
                 <!-- Decoupled from the dropdown selection above on purpose: selecting a profile
                      here only loads it for viewing/editing (and is what "LAUNCH WALL" previews).
                      This is the one thing that actually changes what a real kiosk auto-launch
                      boots into on Windows startup — see ProfileManager.GetDefaultProfileName. -->
                 <CheckBox x:Name="SetDefaultProfileCheckBox"
-                        Content="SET AS DEFAULT (AUTO-LAUNCH)"
+                        Content="DEFAULT (AUTO-LAUNCH)"
+                        ToolTip="Mark this profile as the one the wall boots into on Windows startup"
                         VerticalAlignment="Center"
-                        Margin="20,0,0,0"
+                        Margin="14,0,0,0"
                         Click="SetDefaultProfileCheckBox_Click"/>
             </StackPanel>
         </Border>

@@ -401,5 +401,16 @@ Smoke-tested the actual published exe (not the dev build) standalone before hand
 
 **Profiles are not bundled into the exe.** `ProfileManager` stores profiles under `%LOCALAPPDATA%\NocDisplayHub\Profiles\*.json` — a per-machine, per-user location entirely separate from the compiled binary, deliberately (this is what lets the exe be replaced/updated without ever touching saved layouts). Moving an existing profile (e.g. "Main Dashboard") to a fresh machine means copying that JSON file (plus `active-profile.txt`/`default-profile.txt` if you want it to also be what auto-launches there) into the same relative location on the new machine — a manual file-copy step, not something the publish step can do on its own, since it doesn't know which user profile on the target machine will run it.
 
+## Profile edits were unrecoverable — automatic backups + RESTORE button (2026-10-12)
+Live report: the user accidentally edited their original profile, lost its links, and couldn't get them back (the loss was on a copy of the app other than the dev machine, whose `Main Dashboard.json` was untouched). Not a persistence bug — every editor change (Apply, Unassign, group, ungroup, preset switch) deliberately auto-saves over the active profile file via `ProfileManager.SaveActive`, and that is still the design. The gap was that nothing kept the version being overwritten.
+
+**Fix, all in Core's `ProfileStore.Save`:** before overwriting an existing profile whose content is actually changing, the old file is copied to `Profiles\Backups\<profile name>\<yyyyMMdd-HHmmss-fff>.json`; the newest 50 per profile are kept (`MaxBackupsPerProfile`). Identical re-saves make no backup. Backup failures (`IOException`/`UnauthorizedAccessException`) are swallowed so they can never block the save itself. `ProfileManager.ListProfiles` only scans the top level of `Profiles\`, so `Backups\` never shows up as a profile.
+
+**Editor:** a "RESTORE…" button in the PROFILE row opens `RestoreBackupDialog` listing the selected profile's saved-over versions, newest first, with cell counts. Restoring goes through `Save`, so the version it replaces is itself backed up — a wrong restore is undoable too. A running wall is updated via `ReloadFromProfile`. To fit the new button the profile dropdown was narrowed (220→170) and the checkbox label shortened to "DEFAULT (AUTO-LAUNCH)" (it was being clipped).
+
+**Known gap:** deleting a whole profile (DELETE) still removes it with no way back from the UI; its earlier versions remain under `Backups\<name>\` and can be copied back by hand. Backups only exist from the build that introduced them onward — nothing made before that can be recovered this way.
+
+Verified live on a throwaway profile (1 link, one older 6-link version): dialog listed the old version, RESTORE brought back all 6 links, the replaced 1-link state was backed up, and the preview updated. 58/58 tests pass.
+
 ## Testing
 The user has direct access to the real target hardware (the actual workstation, hub, and GPU) and will test there — don't assume a dev-only simulated environment is equivalent, especially for Phase 2 reliability work (reboot behavior, driver updates, signal loss) which only shows up on real hardware.

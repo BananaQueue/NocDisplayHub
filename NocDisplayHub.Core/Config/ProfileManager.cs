@@ -113,6 +113,14 @@ public static class ProfileManager
 
     public static LayoutManager LoadDefault() => ProfileStore.Load(PathFor(GetDefaultProfileName()));
 
+    public static IReadOnlyList<ProfileBackup> ListBackups(string profileName) => ProfileStore.ListBackups(PathFor(profileName));
+
+    public static LayoutManager RestoreBackup(string profileName, ProfileBackup backup)
+    {
+        ProfileStore.RestoreBackup(PathFor(profileName), backup);
+        return ProfileStore.Load(PathFor(profileName));
+    }
+
     /// <summary>Saves under a (possibly new) name and makes it the active profile.</summary>
     public static void SaveAs(string profileName, LayoutManager manager)
     {
